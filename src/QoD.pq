@@ -29,6 +29,14 @@ DefaultPort = 31338;
 // Set to true while developing to surface ODBC connection-string / fold traces.
 EnableTraceOutput = false;
 
+// DEV ONLY — default for skipping TLS certificate verification, used when the
+// caller doesn't pass options[TrustServerCertificate]. Set true so testing works
+// against the dev server's self-signed cert without threading the flag through
+// every PBI invocation path (the options record isn't part of the data-source
+// path, so PBI drops it on navigator/refresh/TestConnection). MUST be false for
+// certification — by then Quack should present a CA-signed cert (see R11).
+DefaultTrustServerCertificate = true;
+
 // ---------------------------------------------------------------------------
 // Data source function (public surface)
 // ---------------------------------------------------------------------------
@@ -79,7 +87,7 @@ QoDImpl = (server as text, tenant as text, pool as text, optional options as rec
         // --- advanced options (all optional) -----------------------------
         opts            = options ?? [],
         UseEncryption   = opts[UseEncryption]? ?? true,
-        TrustServerCert = opts[TrustServerCertificate]? ?? false,
+        TrustServerCert = opts[TrustServerCertificate]? ?? DefaultTrustServerCertificate,
         // Timeouts are seconds; Odbc.DataSource expects Duration values (below).
         ConnectTimeout  = opts[ConnectionTimeout]? ?? 30,
         QueryTimeout    = opts[CommandTimeout]? ?? 600,
