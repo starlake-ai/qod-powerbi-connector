@@ -109,11 +109,18 @@ populated and scoped to the authenticated tenant/pool.
 - **Acceptance:** the connector's navigation table lists exactly the catalogs/
   schemas/tables the user is authorized to see; hidden objects are absent.
 
-### R7 — Type metadata **(confirm)**
-- `GetXdbcTypeInfo` (or `GetSqlInfo` type metadata) exposes the DuckDB type system
-  so the ODBC driver can map types to Power BI types correctly.
+### R7 — Type metadata **(done)**
+- ✅ Implemented: `GetXdbcTypeInfo` is served from a static DuckDB type catalog
+  (`TypeInfoCatalog`), with the canonical `GET_TYPE_INFO_SCHEMA` field set and ODBC
+  `SQL_TYPE_*` codes. Covers BOOLEAN, the signed/unsigned integer family
+  (TINYINT…BIGINT + Uxxx), HUGEINT (as DECIMAL/38), REAL/DOUBLE, DECIMAL(p,s),
+  VARCHAR, BLOB, DATE/TIME/TIMESTAMP, and UUID. The request's `data_type` filter is
+  honored.
+- **Known limitation:** composite types (LIST, STRUCT, MAP, UNION) are intentionally
+  absent — they have no `SQL_TYPE_*` code; the ODBC driver flattens them to strings.
 - **Acceptance:** DECIMAL, DATE, TIMESTAMP, BOOLEAN, large strings, and 64-bit
   integers round-trip into Power BI with correct types (no silent truncation).
+  *Validate end-to-end against a live instance during the folding pass (R8).*
 
 ---
 
@@ -166,12 +173,25 @@ exercised.
 - **Acceptance:** connecting with `useEncryption=1` and certificate verification
   **on** succeeds against the provided cert.
 
-### R12 — Error semantics **(confirm)**
-- Auth, authorization (RBAC denied), not-found, and SQL errors return distinct
-  Flight SQL status codes (`UNAUTHENTICATED`, `PERMISSION_DENIED`, `NOT_FOUND`,
-  `INVALID_ARGUMENT`) with human-readable messages.
+### R12 — Error semantics **(done)**
+- ✅ Implemented: failures map to distinct Flight `CallStatus` codes via a
+  classified `RouterFailure` enum (no string-prefix parsing). Mapping:
+
+  | Failure shape | Flight `CallStatus` | gRPC code |
+  |---------------|---------------------|-----------|
+  | Bad credentials (handshake) | `UNAUTHENTICATED` | 16 |
+  | RBAC / ACL / row-/column-policy denied | `UNAUTHORIZED` | `PERMISSION_DENIED` (7) |
+  | Unknown pool / tenant-db / table | `NOT_FOUND` | 5 |
+  | Parser / binder / constraint / conversion error | `INVALID_ARGUMENT` | 3 |
+  | No compatible node / transient after retry | `UNAVAILABLE` | 14 |
+  | "Shouldn't happen" paths | `INTERNAL` | 13 |
+
+  > Naming note for the connector: Arrow Flight Java's `CallStatus.UNAUTHORIZED`
+  > **is** the gRPC `PERMISSION_DENIED` code (7) that R12 asked for — same wire
+  > status, different enum label. Map ODBC SQLSTATEs off the wire code, not the name.
 - **Acceptance:** the connector can surface actionable errors (e.g. "wrong
-  password" vs "no access to table X") rather than a generic failure.
+  password" → `UNAUTHENTICATED` vs "no access to table X" → `PERMISSION_DENIED`)
+  rather than a generic failure.
 
 ---
 
@@ -212,12 +232,12 @@ Please provide:
 | R4 | OIDC access token + audience/issuer/scopes | confirm |
 | R5 | Per-statement auth continuity + token lifetime | confirm |
 | R6 | Catalog/schema/table discovery (RBAC-scoped) | confirm |
-| R7 | Type metadata | confirm |
+| R7 | Type metadata (`GetXdbcTypeInfo` catalog) | **done** |
 | R8 | SQL pushdown / DirectQuery folding | confirm |
 | R9 | No parameter binding → connector inlines literals | not supported / client-side |
 | R10 | Result streaming without silent caps | confirm |
 | R11 | TLS cert + SNI host | confirm |
-| R12 | Distinct error status codes | confirm |
+| R12 | Distinct error status codes (`RouterFailure`) | **done** |
 | R13 | Recommended ODBC driver + connection strings | confirm |
 | R14 | Public test instance + per-auth credentials | provide |
 
