@@ -106,22 +106,15 @@ Microsoft's FlightSQL ADBC enablement rather than the bundled ODBC driver.
 - [x] **ADBC path proven** end-to-end against a live Quack instance (TLS, Basic auth,
       tenant/pool routing, discovery, typed + folded queries). See
       [docs/quack-server-spec.md](docs/quack-server-spec.md) §11.
-- [x] Server requirements delivered by the Quack team (R7 types, R12 errors, R15
-      `GetSqlInfo`); R15a (don't advertise unimplemented transactions) outstanding.
 - [ ] **Engage Microsoft** for FlightSQL ADBC enablement (the Dremio path), bringing
       the ADBC validation evidence + "same protocol as Dremio" argument.
 - [ ] Fill in real OIDC endpoints / `client_id` / scopes in `OAuthConfig`.
-- [ ] Provide a public test instance + per-auth credentials for certification (R14).
+- [ ] Provide a public test instance + per-auth credentials for certification.
 - [x] Connector icons sourced from the official Quack on Demand brand mark.
-
-**Parked (ODBC transport):** validate DirectQuery folding in Desktop and confirm the
-ODBC driver's auth key names — both blocked until the Dremio Arrow Flight SQL ODBC
-driver implements `SQLGetInfo(SQL_DBMS_NAME)`. Tracked in
-[docs/quack-server-spec.md](docs/quack-server-spec.md) R13.
 
 ## Notes
 
-- The repo directory is named `pbi-adbc-driver`; the connector identifier and
+- The repo directory is named `qod-powerbi-connector`; the connector identifier and
   display name are **QoD** / **Quack on Demand**.
 - Icons are downscaled from the official brand mark
   (`src/icons/source/qod-mark-512.png`) by `src/icons/generate-icons.ps1`.
