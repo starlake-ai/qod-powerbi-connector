@@ -125,26 +125,36 @@ QoDImpl = (server as text, tenant as text, pool as text, optional options as rec
 // ---------------------------------------------------------------------------
 // Connection string builder
 // ---------------------------------------------------------------------------
-// NOTE: property names below follow the Arrow / Dremio Flight SQL ODBC driver
-// lineage. Confirm the exact keys against the driver build Quack recommends and
-// adjust here only — the rest of the connector is property-name agnostic.
+// Property keys below are taken from the Arrow Flight SQL ODBC driver
+// documentation (Dremio build):
+//   host=...;port=...;useEncryption=1;disableCertificateVerification=1;token=...
+// Booleans are the literals "1"/"0" (NOT "true"/"false"). Verify against the
+// exact driver build Quack ships; the rest of the connector is key-agnostic.
+//   ref: https://docs.dremio.com/cloud/sonar/client-apps/drivers/arrow-flight-sql-odbc/
 
 BuildConnectionString = (host as text, port as any, tenant as text, pool as text, useEncryption as logical, trustCert as logical) as record =>
     [
-        Driver   = DriverName,
-        HOST     = host,
-        PORT     = Text.From(port),
+        Driver = DriverName,
+        host   = host,
+        port   = Text.From(port),
 
-        // TLS — Quack is TLS-enabled by default.
-        UseEncryption                  = if useEncryption then "true" else "false",
-        DisableCertificateVerification = if trustCert then "true" else "false",
+        // TLS — Quack is TLS-enabled by default. Driver expects 1/0.
+        useEncryption                  = if useEncryption then "1" else "0",
+        disableCertificateVerification = if trustCert then "1" else "0"
 
-        // Quack scope parameters. These are delivered to the gateway as
-        // Flight SQL gRPC call headers by the driver's "header" passthrough.
-        // (Driver-specific: some builds use "rpc-header.<name>"; verify.)
-        tenant   = tenant,
-        pool     = pool
-    ];
+        // NOTE: `tenant` and `pool` are NOT plain connection properties on the
+        // documented Dremio build — that driver exposes no custom-header knob.
+        // Quack reads them as Flight SQL gRPC call headers, so they are added
+        // separately by AddCallHeaders below using whatever passthrough the
+        // shipped driver supports (verify the exact mechanism/key convention).
+    ] & AddCallHeaders([ tenant = tenant, pool = pool ]);
+
+// Adds Quack scope parameters as Flight SQL gRPC call headers.
+// The documented Dremio build has no header passthrough; builds derived from the
+// upstream Apache Arrow C++/`timvw` driver typically accept extra connection
+// properties and forward unrecognized ones as call headers. Centralized here so
+// the exact convention can be set once after confirming with the shipped driver.
+AddCallHeaders = (headers as record) as record => headers;
 
 // Maps the Power BI credential the user selected to ODBC properties.
 //   UsernamePassword -> UID / PWD

@@ -66,9 +66,29 @@ change in `QoD.pq`. The connector is structured so the switch is isolated:
 `tenant` and `pool` are always sent as Flight SQL gRPC call headers via the
 driver's header passthrough.
 
+## Driver connection properties
+
+Verified from the Arrow Flight SQL ODBC driver docs
+([Dremio build](https://docs.dremio.com/cloud/sonar/client-apps/drivers/arrow-flight-sql-odbc/)):
+
+| Property | Notes |
+|----------|-------|
+| `host`, `port` | Flight SQL endpoint |
+| `useEncryption` | **`1`/`0`** (not `true`/`false`) — TLS on by default |
+| `disableCertificateVerification` | `1`/`0` |
+| `useSystemTrustStore`, `trustedCerts` | optional cert config |
+| `token` | personal access token / JWT (bearer) |
+| `schema` | optional default schema |
+
+Sample: `host=…;port=443;useEncryption=1;disableCertificateVerification=1;token=…`
+
 ## Open items to verify against the shipped driver build
-- Exact ODBC property keys (`HOST`/`PORT`/`UseEncryption`/`token`, and how custom
-  Flight SQL call headers like `tenant`/`pool` are named — some builds use a
-  `rpc-header.<name>` convention).
+- **`tenant` / `pool` as Flight SQL call headers.** The documented Dremio build
+  exposes **no** custom-header knob and **no** user/password auth (token only).
+  Quack needs both. Confirm which driver Quack recommends — the upstream Apache
+  Arrow C++ ODBC driver (newly merged) or a `timvw`-derived build — and the exact
+  header passthrough convention. Isolated in `AddCallHeaders` / connection builder.
+- **Username/password auth** key names (`UID`/`PWD` vs `user`/`password`) for the
+  shipped driver — only `token` is documented.
 - Which scalar/aggregate functions DuckDB folds, to widen `SQLGetFunctions`.
 - OIDC endpoints / `client_id` / scopes per deployment (see `OAuthConfig`).
