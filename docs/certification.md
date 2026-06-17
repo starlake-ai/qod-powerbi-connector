@@ -20,7 +20,7 @@ checklist and process to get QoD there.
 - [x] **DirectQuery** support via `Odbc.DataSource` capability shaping
       (`SupportsDirectQuery = true`).
 - [x] All three authentication kinds declared (`UsernamePassword`, `Key`, `OAuth`).
-- [ ] **Query folding validated** — filters, projections, joins, group-by fold to
+- [ ] **Query folding validated** - filters, projections, joins, group-by fold to
       Flight SQL (use "View Native Query" + driver logs). Widen
       `SQLGetFunctions` only for functions DuckDB actually supports.
 - [ ] No credentials persisted in the M document; secrets only via
@@ -47,7 +47,7 @@ checklist and process to get QoD there.
 3. **Submit** the `.mez` + artifacts to Microsoft's private connector repo
    (Microsoft validates, security-reviews, and folds it into the product).
 4. **Iterate** on Microsoft's review feedback.
-5. **Release** — ships first as **Beta** (`Beta = true` in `Publish`), graduating
+5. **Release** - ships first as **Beta** (`Beta = true` in `Publish`), graduating
    to certified/GA after the bake period. Remove `Beta` when GA.
 
 ## Local validation before submitting

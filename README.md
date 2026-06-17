@@ -1,4 +1,4 @@
-# QoD — Quack on Demand Power BI Connector
+# QoD - Quack on Demand Power BI Connector
 
 A Power BI / Microsoft Fabric **custom connector** for
 [Quack on Demand](https://github.com/starlake-ai/quack-on-demand), connecting over
@@ -18,11 +18,11 @@ Power BI ──M──▶ QoD.mez ──ODBC──▶ Arrow Flight SQL ODBC driv
 
 Power BI's M engine consumes **ODBC** (via `Odbc.DataSource`); it has no public
 `Adbc.DataSource` for custom connectors. The connector M is complete and validated,
-**but the only Flight SQL ODBC driver (Dremio's v0.9.7 beta) is too immature** — it
+**but the only Flight SQL ODBC driver (Dremio's v0.9.7 beta) is too immature** - it
 errors on Power BI's `SQLGetInfo(SQL_DBMS_NAME)` probe, which is unfixable from the
 connector or server. So the chosen route is the **"Dremio path"**: a
 certification-time enablement onto Microsoft's **FlightSQL ADBC** driver (Dremio's
-replacement driver — and Quack speaks the same protocol). **ADBC is proven working
+replacement driver - and Quack speaks the same protocol). **ADBC is proven working
 against Quack end-to-end.** See [docs/architecture.md](docs/architecture.md).
 
 ## Authentication (all three supported)
@@ -51,7 +51,7 @@ CHANGELOG.md           versioned change history
 
 ## Install
 
-See **[INSTALL.md](INSTALL.md)** for full install instructions — building from
+See **[INSTALL.md](INSTALL.md)** for full install instructions - building from
 source, dropping in a pre-built **unsigned** `.mez` (dev), or deploying a
 **signed** `.pqx` (production).
 
@@ -90,7 +90,7 @@ to the resulting `.mez` (a zip) so `Extension.Contents` can resolve them.
   maintained, certifiable). See the capability matrix in
   [docs/architecture.md](docs/architecture.md).
 - **tenant/pool:** conveyed as native Flight SQL gRPC call headers, reusing the same
-  routing contract Quack already honors for JDBC — so **no server change**. Encoding
+  routing contract Quack already honors for JDBC - so **no server change**. Encoding
   is driver-specific (centralized in `EncodeScope`): the Dremio ODBC build auto-
   forwards plain `tenant`/`pool` props as headers (used today); the upstream C++
   build uses an explicit `RPCCallHeaders` property. See [docs/architecture.md](docs/architecture.md).
@@ -102,7 +102,7 @@ blocked on driver immaturity (see *How it connects*), so certification goes via
 Microsoft's FlightSQL ADBC enablement rather than the bundled ODBC driver.
 
 - [x] Connector M built (`QoD.mez` via MakePQX) and validated in Desktop up to the
-      driver's `SQLGetInfo` probe — five real bugs found & fixed in the process.
+      driver's `SQLGetInfo` probe - five real bugs found & fixed in the process.
 - [x] **ADBC path proven** end-to-end against a live Quack instance (TLS, Basic auth,
       tenant/pool routing, discovery, typed + folded queries). See
       [docs/quack-server-spec.md](docs/quack-server-spec.md) §11.

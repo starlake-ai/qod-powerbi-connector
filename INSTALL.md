@@ -6,9 +6,9 @@ Three ways to get the connector into Power BI, depending on whether you want to
 
 - [Prerequisites](#prerequisites)
 - [The artifacts (`.mez` vs `.pqx`)](#the-artifacts)
-- [Option 1 — Build from source](#option-1--build-from-source)
-- [Option 2 — Install a pre-built unsigned `.mez`](#option-2--install-a-pre-built-unsigned-mez-devtesting)
-- [Option 3 — Install a signed `.pqx`](#option-3--install-a-signed-pqx-production)
+- [Option 1 - Build from source](#option-1--build-from-source)
+- [Option 2 - Install a pre-built unsigned `.mez`](#option-2--install-a-pre-built-unsigned-mez-devtesting)
+- [Option 3 - Install a signed `.pqx`](#option-3--install-a-signed-pqx-production)
 - [Connecting](#connecting)
 - [Troubleshooting](#troubleshooting)
 
@@ -18,7 +18,7 @@ Three ways to get the connector into Power BI, depending on whether you want to
 
 - **Power BI Desktop** (and/or the on‑premises **data gateway** for refresh in the
   Power BI Service).
-- The **Arrow Flight SQL ODBC driver** registered on the machine/gateway — the
+- The **Arrow Flight SQL ODBC driver** registered on the machine/gateway - the
   connector wraps it (`Driver = "Arrow Flight SQL ODBC Driver"`). Download and run
   the Windows installer (`.msi`) from
   [Dremio's Arrow Flight SQL ODBC driver page](https://docs.dremio.com/cloud/sonar/client-apps/drivers/arrow-flight-sql-odbc/).
@@ -31,12 +31,12 @@ Three ways to get the connector into Power BI, depending on whether you want to
 
 | File | What it is | Loads in PBI when… |
 |------|------------|--------------------|
-| `QoD.mez` | The connector package — a zip of `QoD.pq` + `resources.resx` + icon PNGs. **Unsigned.** | the “allow any extension” security setting is on (Option 2) |
+| `QoD.mez` | The connector package - a zip of `QoD.pq` + `resources.resx` + icon PNGs. **Unsigned.** | the “allow any extension” security setting is on (Option 2) |
 | `QoD.pqx` | A **packed, signed** connector (signed with a code‑signing certificate). | the signing certificate is trusted (Option 3) |
 
 ---
 
-## Option 1 — Build from source
+## Option 1 - Build from source
 
 Pick one of the three build paths. All produce `bin/Release/QoD.mez`.
 
@@ -85,7 +85,7 @@ Remove-Item $stage -Recurse -Force
 
 ---
 
-## Option 2 — Install a pre-built unsigned `.mez` (dev/testing)
+## Option 2 - Install a pre-built unsigned `.mez` (dev/testing)
 
 1. Copy `QoD.mez` to the custom-connectors folder (create it if missing):
 
@@ -103,14 +103,14 @@ Remove-Item $stage -Recurse -Force
 folder and enable custom connectors in the gateway app, then restart the gateway
 service.
 
-> Unsigned is for development only — it requires the security downgrade above.
+> Unsigned is for development only - it requires the security downgrade above.
 > For shared/production use, sign it (Option 3).
 
 ---
 
-## Option 3 — Install a signed `.pqx` (production)
+## Option 3 - Install a signed `.pqx` (production)
 
-A signed connector loads **without** lowering the security setting — you keep the
+A signed connector loads **without** lowering the security setting - you keep the
 **Recommended** setting and **trust the signing certificate's thumbprint** instead.
 Power BI's custom-connector trust is thumbprint-allowlist based: a `.pqx` whose
 signing certificate's thumbprint is in the trusted list loads with no downgrade;
@@ -150,7 +150,7 @@ You need a **code-signing certificate** (`.pfx`, with private key).
    (Group Policy *“Trusted Certificate Thumbprints”*, or registry):
 
    ```powershell
-   # Admin — add the thumbprint to Power BI Desktop's trusted list
+   # Admin - add the thumbprint to Power BI Desktop's trusted list
    $thumb = "<CERT-THUMBPRINT>"
    $key   = "HKLM:\SOFTWARE\Policies\Microsoft\Power BI Desktop"
    New-Item -Path $key -Force | Out-Null
@@ -158,9 +158,9 @@ You need a **code-signing certificate** (`.pfx`, with private key).
      -PropertyType MultiString -Value @($thumb) -Force
    ```
 
-   (`TrustedCertificateThumbprints` is a `REG_MULTI_SZ` — one SHA‑1 thumbprint per
+   (`TrustedCertificateThumbprints` is a `REG_MULTI_SZ` - one SHA‑1 thumbprint per
    line; deployable org‑wide via Group Policy *“Trusted Certificate Thumbprints”*.)
-   The on-prem gateway has an equivalent trusted-thumbprint configuration — consult
+   The on-prem gateway has an equivalent trusted-thumbprint configuration - consult
    the current Microsoft docs for the exact gateway path on your version.
 4. **Restart** Power BI Desktop (or the gateway service).
 
@@ -181,9 +181,9 @@ Two workflows publish to GitHub Releases:
 
 The signed workflow needs two repository **secrets**:
 
-- `SIGNING_PFX_BASE64` — base64 of your code-signing `.pfx`
+- `SIGNING_PFX_BASE64` - base64 of your code-signing `.pfx`
   (`[Convert]::ToBase64String([IO.File]::ReadAllBytes("code-signing.pfx"))`)
-- `SIGNING_PFX_PASSWORD` — the `.pfx` password
+- `SIGNING_PFX_PASSWORD` - the `.pfx` password
 
 It runs on Windows (MakePQX is a Windows executable) and acquires MakePQX from the
 `Microsoft.PowerQuery.SdkTools` NuGet package.
@@ -199,7 +199,7 @@ It runs on Windows (MakePQX is a Windows executable) and acquires MakePQX from t
 | Server | `quack.example.com:31338` | `host:port` (defaults to port `31338`) |
 | Tenant | `acme` | routed as a gRPC call header |
 | Pool | `bi` | routed as a gRPC call header |
-| Trust server certificate | `true` / `false` | **required** — `true` **only** for a self-signed dev endpoint; `false` (verify) for production |
+| Trust server certificate | `true` / `false` | **required** - `true` **only** for a self-signed dev endpoint; `false` (verify) for production |
 
 Then pick a credential kind:
 

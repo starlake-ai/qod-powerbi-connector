@@ -1,7 +1,7 @@
 # QoD ODBC probe
 
 A tiny x64 .NET console app that connects to a Quack on Demand server through the
-**Arrow Flight SQL ODBC driver** the same way the QoD connector does — but outside
+**Arrow Flight SQL ODBC driver** the same way the QoD connector does - but outside
 Power BI. Use it to reproduce/diagnose driver-level behavior with clear SQLSTATE
 output, without the Power BI round-trip.
 
@@ -12,8 +12,8 @@ properties (the Dremio build auto-forwards unknown keys as gRPC call headers).
 ## Why x64 (and why error 193 otherwise)
 
 The driver (`arrow-flight-sql-odbc.dll`) is an **x64** DLL. A process must be x64
-to load it. On **Windows ARM64**, a native ARM64 process — including the built-in
-"ODBC Data Sources (64-bit)" admin — fails with **system error 193** ("not a valid
+to load it. On **Windows ARM64**, a native ARM64 process - including the built-in
+"ODBC Data Sources (64-bit)" admin - fails with **system error 193** ("not a valid
 Win32 application"). This project targets `win-x64` (+ self-contained) so it builds
 an x64 exe that runs under emulation and *can* load the driver.
 
@@ -41,9 +41,9 @@ Other env overrides: `QOD_HOST`, `QOD_PORT`, `QOD_TENANT`, `QOD_POOL`, `QOD_DRIV
 
 ## What it checks
 
-1. **Connect + auth** — TLS handshake, Basic auth, tenant/pool routing.
-2. **Literal SELECT** — basic execute path.
-3. **Table query** — `SELECT COUNT(*) FROM tpch1.lineitem`, which goes through the
+1. **Connect + auth** - TLS handshake, Basic auth, tenant/pool routing.
+2. **Literal SELECT** - basic execute path.
+3. **Table query** - `SELECT COUNT(*) FROM tpch1.lineitem`, which goes through the
    driver's `CreatePreparedStatement` path. If the server omits `parameter_schema`
    you'll see `Tried reading schema message, was null or length 0` here.
 

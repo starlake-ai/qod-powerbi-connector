@@ -24,7 +24,7 @@ Initial Beta of the QoD custom connector, targeting Microsoft certification.
 - DirectQuery capability shaping (`SqlCapabilities`, `SQLGetInfo`,
   `SQLGetFunctions`) and full icon set (16/20/24/32/40/48/64/80).
 - All user-facing UI strings localized through `resources.resx`
-  (`Extension.LoadString`) — field captions/descriptions and auth labels.
+  (`Extension.LoadString`) - field captions/descriptions and auth labels.
 
 ### Known limitations
 - Quack does not support Flight SQL parameter binding; the connector inlines
