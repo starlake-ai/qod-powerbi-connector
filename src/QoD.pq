@@ -147,20 +147,25 @@ BuildConnectionString = (host as text, port as any, tenant as text, pool as text
         disableCertificateVerification = if trustCert then "1" else "0"
     ] & EncodeScope(tenant, pool);
 
-// Quack scope (tenant / pool) is conveyed as native Flight SQL gRPC call headers
-// via the Arrow Flight SQL ODBC driver's `RPCCallHeaders` passthrough. This is the
-// SAME contract Quack already honors for its JDBC driver (`?tenant=…&pool=…` →
-// gRPC metadata), so it needs NO server-side change — the gateway routes on the
-// `tenant`/`pool` headers it already understands. (Confirmed by the Quack team:
-// the Apache Arrow Flight SQL ODBC build forwards DSN props through
-// `RPCCallHeaders=key=val;key=val`.)
-// Centralized so an alternate encoding (e.g. fall back to `database`/`schema`
-// catalog properties) is a one-line change. See docs/architecture.md
-// ("tenant/pool channel"). The exact header-list delimiter/escaping is confirmed
-// against the shipped driver build at certification.
+// Quack scope (tenant / pool) is conveyed as native Flight SQL gRPC call headers.
+// This is the SAME contract Quack already honors for its JDBC driver
+// (`?tenant=…&pool=…` → gRPC metadata), so it needs NO server-side change — the
+// gateway routes on the `tenant`/`pool` headers it already understands.
+//
+// Encoding is driver-specific (centralized here so it's a one-line swap):
+//   • Dremio Arrow Flight SQL ODBC build (what Power BI loads today): UNKNOWN
+//     connection properties are auto-forwarded verbatim as gRPC call headers, so
+//     we emit `tenant` and `pool` as plain, separate properties.
+//   • Upstream Apache C++ build: uses an explicit packed `RPCCallHeaders` property
+//     ("tenant=…;pool=…"). DO NOT use that form here — its embedded `;`/`=`
+//     corrupts the `;`-delimited ODBC connection string Power Query builds from
+//     this record (it swallowed `host`/`port` -> driver error "Missing required
+//     properties: host, port"). Separate keys avoid that entirely.
+// See docs/architecture.md ("tenant/pool channel").
 EncodeScope = (tenant as text, pool as text) as record =>
     [
-        RPCCallHeaders = "tenant=" & tenant & ";pool=" & pool
+        tenant = tenant,
+        pool   = pool
     ];
 
 // Maps the Power BI credential the user selected to ODBC properties.
