@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSBuild project for the QoD (Quack on Demand) Power Query connector.
+
+  Build options:
+    1. VS Code "Power Query SDK" extension  -> "Build connector project" (recommended)
+    2. CLI with the SDK's MSBuild SDK target:
+         dotnet build src/QoD.proj -c Release
+       (produces bin/<Config>/QoD.mez)
+
+  The .mez is a zip of the compiled .pqm, resources.resx, and icon PNGs.
+-->
+<Project Sdk="Microsoft.PowerQuery.SdkTools.MSBuild">
+  <PropertyGroup>
+    <Title>Quack on Demand</Title>
+    <Version>1.0.0</Version>
+    <ProjectGuid>b2f0a6f4-3a2e-4f0a-9b2a-qod00connector</ProjectGuid>
+    <DefaultLocale>en-US</DefaultLocale>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Connector source -->
+    <Compile Include="QoD.pq" />
+    <!-- Localized strings -->
+    <EmbeddedResource Include="resources.resx" />
+    <!-- Icons (all sizes required for certification) -->
+    <Content Include="icons\QoD16.png" />
+    <Content Include="icons\QoD20.png" />
+    <Content Include="icons\QoD24.png" />
+    <Content Include="icons\QoD32.png" />
+    <Content Include="icons\QoD40.png" />
+    <Content Include="icons\QoD48.png" />
+    <Content Include="icons\QoD64.png" />
+    <Content Include="icons\QoD80.png" />
+  </ItemGroup>
+</Project>

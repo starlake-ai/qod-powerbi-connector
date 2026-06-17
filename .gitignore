@@ -1,0 +1,22 @@
+# Power Query SDK / connector build artifacts
+bin/
+obj/
+*.mez
+*.pqx
+
+# Power Query SDK credentials & test state (NEVER commit)
+*.mez.credentials
+.vscode/*.json.user
+*.crd
+
+# Local Claude Code settings (machine-specific)
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+
+# Logs / traces
+*.log
+Mashup*.log
