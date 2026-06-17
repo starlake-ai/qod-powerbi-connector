@@ -33,14 +33,13 @@ marked **(confirm)** may already work — we just need verification; items marke
 
 ## 2. Scope routing (tenant / pool)
 
-### R1 — Accept tenant/pool via `RPCCallHeaders` gRPC metadata **(confirm)**
+### R1 — Accept tenant/pool via gRPC call-header metadata **(confirm)**
 Today Quack takes `tenant` and `pool` as JDBC URL parameters, delivered as gRPC
-call headers. The connector sends the **same headers** over ODBC through the Arrow
-Flight SQL ODBC driver's `RPCCallHeaders` property:
-
-```
-RPCCallHeaders = tenant=<tenant>;pool=<pool>
-```
+call headers. The connector sends the **same headers** over ODBC. The exact
+connection-string encoding is driver-specific but the wire result is identical: the
+Dremio Arrow Flight SQL ODBC build (loaded by Power BI today) auto-forwards plain
+`tenant`/`pool` connection properties as gRPC headers; the upstream Apache C++ build
+uses an explicit `RPCCallHeaders` property.
 
 These arrive as gRPC call metadata on the Flight SQL session — **identical to the
 JDBC path** — so no server-side parsing or mapping is required.

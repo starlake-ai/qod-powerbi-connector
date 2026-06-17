@@ -80,10 +80,11 @@ to the resulting `.mez` (a zip) so `Extension.Contents` can resolve them.
 - **Driver:** official **Apache Arrow C++ Flight SQL ODBC** driver (vendor-neutral,
   maintained, certifiable). See the capability matrix in
   [docs/architecture.md](docs/architecture.md).
-- **tenant/pool:** conveyed as native Flight SQL gRPC call headers via the driver's
-  `RPCCallHeaders` property (`RPCCallHeaders=tenant=…;pool=…`). This reuses the same
-  routing contract Quack already honors for JDBC, so it needs **no server change**.
-  Centralized in `EncodeScope`; falling back to `database`/`schema` is a one-liner.
+- **tenant/pool:** conveyed as native Flight SQL gRPC call headers, reusing the same
+  routing contract Quack already honors for JDBC — so **no server change**. Encoding
+  is driver-specific (centralized in `EncodeScope`): the Dremio ODBC build auto-
+  forwards plain `tenant`/`pool` props as headers (used today); the upstream C++
+  build uses an explicit `RPCCallHeaders` property. See [docs/architecture.md](docs/architecture.md).
 
 ## Status / TODO before certification
 

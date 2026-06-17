@@ -103,19 +103,23 @@ token-only; JDBC isn't usable from Power BI's M engine.
 
 ## tenant/pool channel (decision)
 
-The connector sends scope as **native Flight SQL gRPC call headers** through the
-Arrow Flight SQL ODBC driver's documented `RPCCallHeaders` property:
+The connector sends scope as **native Flight SQL gRPC call headers**. This is the
+**same contract Quack already honors for its JDBC driver** (where `?tenant=…&pool=…`
+URL params become gRPC metadata), so it needs **no server-side change** — the
+gateway routes on the `tenant`/`pool` headers it already understands.
 
-```
-RPCCallHeaders = "tenant=<tenant>;pool=<pool>"
-```
+The connection-string **encoding is driver-specific** (centralized in `EncodeScope`):
 
-This is the **same contract Quack already honors for its JDBC driver** (where
-`?tenant=…&pool=…` URL params become gRPC metadata), so it needs **no server-side
-change** — the gateway routes on the `tenant`/`pool` headers it already
-understands. The Quack team confirmed the Apache Arrow Flight SQL ODBC build
-forwards DSN props via `RPCCallHeaders` (Dremio's build auto-forwards unknown
-keys; the upstream C++ build exposes the explicit `RPCCallHeaders` property).
+| Driver build | Encoding |
+|---|---|
+| **Dremio** Arrow Flight SQL ODBC (what Power BI loads today) | plain separate props `tenant=…;pool=…` — the driver auto-forwards unknown keys as gRPC headers |
+| Upstream **Apache C++** build | explicit packed `RPCCallHeaders="tenant=…;pool=…"` |
+
+> The connector uses the **separate-keys** form. The packed `RPCCallHeaders` form
+> must **not** be used with the record Power Query passes to `Odbc.DataSource`: its
+> embedded `;`/`=` corrupt the `;`-delimited ODBC connection string and the driver
+> reports `Missing required properties: host, port`. (Caught loading the `.mez` in
+> Desktop, 2026-06-17.)
 
 > Earlier draft used the `database`→tenant / `schema`→pool catalog properties to
 > avoid depending on ODBC header passthrough. That passthrough is now confirmed
