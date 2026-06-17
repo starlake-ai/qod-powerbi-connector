@@ -40,8 +40,9 @@ src/
   resources.resx    localized UI strings
   icons/            connector icons + generator script
 docs/
-  architecture.md   data path + the ADBC upgrade path
-  certification.md  Microsoft certification checklist & process
+  architecture.md      data path + the ADBC upgrade path
+  certification.md     Microsoft certification checklist & process
+  quack-server-spec.md server-side requirements to hand to the Quack team
 ```
 
 ## Build
