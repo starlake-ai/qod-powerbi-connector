@@ -82,13 +82,43 @@ Verified from the Arrow Flight SQL ODBC driver docs
 
 Sample: `host=…;port=443;useEncryption=1;disableCertificateVerification=1;token=…`
 
+## Driver selection (decision)
+
+No single *ODBC* driver currently covers everything Quack needs. Capability matrix:
+
+| Capability | JDBC | timvw ODBC | **Apache Arrow C++ ODBC** | Dremio ODBC |
+|---|---|---|---|---|
+| User/password | ✅ | ✅ | ⚠️ foundational | ❌ |
+| Token / JWT | ✅ | ❌ | ⚠️ TBD | ✅ |
+| OAuth | ✅ | ❌ | ❌ | ❌ |
+| tenant/pool as headers | ✅ (unknown params → gRPC headers) | ❌ | ⚠️ TBD | ❌ |
+| Maintained | ✅ | ❌ archived Mar 2026 | ✅ new/official | ✅ |
+| Usable from Power BI (ODBC) | ❌ Java-only | ✅ | ✅ | ✅ |
+
+**Decision: target the official Apache Arrow C++ Flight SQL ODBC driver.** It is
+vendor-neutral, actively developed, certifiable, and shares the lineage Microsoft
+uses for the Dremio "FlightSQL ADBC" path. `timvw` is archived (dead); Dremio is
+token-only; JDBC isn't usable from Power BI's M engine.
+
+## tenant/pool channel (decision)
+
+The only driver that forwards arbitrary properties as gRPC headers is **JDBC**
+(which Power BI can't use). Rather than depend on an undocumented ODBC header
+passthrough, the connector conveys scope through the **standard catalog/schema
+properties** every Flight SQL ODBC build honors:
+
+```
+database -> tenant
+schema   -> pool
+```
+
+Quack maps these back to its tenant/pool routing server-side. Implemented in
+`EncodeScope`; swapping to a dotted `schema=tenant.pool` encoding is a one-liner.
+
 ## Open items to verify against the shipped driver build
-- **`tenant` / `pool` as Flight SQL call headers.** The documented Dremio build
-  exposes **no** custom-header knob and **no** user/password auth (token only).
-  Quack needs both. Confirm which driver Quack recommends — the upstream Apache
-  Arrow C++ ODBC driver (newly merged) or a `timvw`-derived build — and the exact
-  header passthrough convention. Isolated in `AddCallHeaders` / connection builder.
-- **Username/password auth** key names (`UID`/`PWD` vs `user`/`password`) for the
-  shipped driver — only `token` is documented.
+- Exact **registered driver name** of the official C++ build (for `Driver=…`).
+- **Username/password** key names (`UID`/`PWD` vs `user`/`password`) and **token**
+  property support in the C++ build as auth matures.
+- Server-side parse rule in Quack for `database`→tenant / `schema`→pool.
 - Which scalar/aggregate functions DuckDB folds, to widen `SQLGetFunctions`.
 - OIDC endpoints / `client_id` / scopes per deployment (see `OAuthConfig`).

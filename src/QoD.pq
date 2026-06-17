@@ -17,7 +17,10 @@ section QoD;
 // ---------------------------------------------------------------------------
 
 // Name of the ODBC driver exactly as registered on the machine / gateway.
-// Verify against the build of the Arrow Flight SQL ODBC driver you ship.
+// Target: the official Apache Arrow C++ Flight SQL ODBC driver (vendor-neutral,
+// actively developed, certifiable). Confirm the exact registered driver name
+// for the build Quack ships, then set it here. (The Dremio build registers as
+// "Arrow Flight SQL ODBC Driver"; the upstream C++ build's name may differ.)
 DriverName = "Arrow Flight SQL ODBC Driver";
 
 // Default Flight SQL port for Quack on Demand.
@@ -141,20 +144,21 @@ BuildConnectionString = (host as text, port as any, tenant as text, pool as text
         // TLS — Quack is TLS-enabled by default. Driver expects 1/0.
         useEncryption                  = if useEncryption then "1" else "0",
         disableCertificateVerification = if trustCert then "1" else "0"
+    ] & EncodeScope(tenant, pool);
 
-        // NOTE: `tenant` and `pool` are NOT plain connection properties on the
-        // documented Dremio build — that driver exposes no custom-header knob.
-        // Quack reads them as Flight SQL gRPC call headers, so they are added
-        // separately by AddCallHeaders below using whatever passthrough the
-        // shipped driver supports (verify the exact mechanism/key convention).
-    ] & AddCallHeaders([ tenant = tenant, pool = pool ]);
-
-// Adds Quack scope parameters as Flight SQL gRPC call headers.
-// The documented Dremio build has no header passthrough; builds derived from the
-// upstream Apache Arrow C++/`timvw` driver typically accept extra connection
-// properties and forward unrecognized ones as call headers. Centralized here so
-// the exact convention can be set once after confirming with the shipped driver.
-AddCallHeaders = (headers as record) as record => headers;
+// Quack scope (tenant / pool) is conveyed through the driver's STANDARD catalog
+// and schema properties rather than custom gRPC call headers, because no current
+// Flight SQL ODBC build reliably forwards arbitrary headers (the JDBC driver does;
+// the ODBC ones don't). `database` and `schema` are honored by every Flight SQL
+// ODBC build, so the connector stays portable; Quack maps them back server-side:
+//     database -> tenant ,  schema -> pool
+// Centralized so an alternate encoding (e.g. dotted `schema=tenant.pool`) is a
+// one-line change. See docs/architecture.md ("tenant/pool channel").
+EncodeScope = (tenant as text, pool as text) as record =>
+    [
+        database = tenant,
+        schema   = pool
+    ];
 
 // Maps the Power BI credential the user selected to ODBC properties.
 //   UsernamePassword -> UID / PWD

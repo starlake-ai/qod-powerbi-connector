@@ -61,10 +61,21 @@ dotnet build src/QoD.proj -c Release   # -> bin/Release/QoD.mez
    `Documents\Power BI Desktop\Custom Connectors\` and enable
    *Allow any extension* (File → Options → Security) for unsigned dev builds.
 
+## Decisions
+
+- **Driver:** official **Apache Arrow C++ Flight SQL ODBC** driver (vendor-neutral,
+  maintained, certifiable). See the capability matrix in
+  [docs/architecture.md](docs/architecture.md).
+- **tenant/pool:** conveyed via the standard `database`/`schema` properties
+  (`database`→tenant, `schema`→pool), not custom gRPC headers — portable across
+  every ODBC build. Quack maps them back server-side.
+
 ## Status / TODO before certification
 
-- [ ] Verify exact Flight SQL ODBC driver property keys (incl. `tenant`/`pool`
-      header convention) against the shipped driver build.
+- [x] Verified Flight SQL ODBC property keys (`host`/`port`/`useEncryption=1|0`/
+      `token`); scope mapping decided (`database`/`schema`).
+- [ ] Confirm the official C++ driver's registered name + auth key names as it matures.
+- [ ] Add the `database`→tenant / `schema`→pool parse rule on the Quack server.
 - [ ] Validate DirectQuery folding against a live Quack instance; widen
       `SQLGetFunctions` to match DuckDB.
 - [ ] Fill in real OIDC endpoints / `client_id` / scopes in `OAuthConfig`.
