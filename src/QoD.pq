@@ -80,6 +80,7 @@ QoDImpl = (server as text, tenant as text, pool as text, optional options as rec
         opts            = options ?? [],
         UseEncryption   = opts[UseEncryption]? ?? true,
         TrustServerCert = opts[TrustServerCertificate]? ?? false,
+        // Timeouts are seconds; Odbc.DataSource expects Duration values (below).
         ConnectTimeout  = opts[ConnectionTimeout]? ?? 30,
         QueryTimeout    = opts[CommandTimeout]? ?? 600,
 
@@ -98,8 +99,8 @@ QoDImpl = (server as text, tenant as text, pool as text, optional options as rec
             // projections, joins, aggregations into Flight SQL.
             HierarchicalNavigation = true,
             HideNativeQuery        = false,
-            ConnectionTimeout      = ConnectTimeout,
-            CommandTimeout         = QueryTimeout,
+            ConnectionTimeout      = #duration(0, 0, 0, ConnectTimeout),
+            CommandTimeout         = #duration(0, 0, 0, QueryTimeout),
 
             // Token / password injected out-of-band from the connection string
             // so credentials never appear in a saved M query.
