@@ -63,37 +63,68 @@ JDBC path** — so no server-side parsing or mapping is required.
 
 ## 3. Authentication
 
-The connector exposes three Power BI credential kinds. Each maps to a Flight SQL
-auth mechanism that Quack must accept over the **ODBC** driver's handshake.
+The connector collapses all three Power BI credential kinds to a single per-call
+credential header — it does **not** use the driver's native `UID`/`PWD`/`token`.
+The header is sent under the custom name **`x-qod-authorization`** (an unknown key
+the driver forwards verbatim); Quack validates it **per call** and also accepts
+standard `Authorization`.
 
-### R2 — Username / password (Basic auth) **(confirm)**
-- Flight SQL handshake with `Basic` credentials (username + password), validated
-  against Quack's Postgres/BCrypt backend.
-- **Acceptance:** ODBC connection with `UID`/`PWD` (or `user`/`password`,
-  whichever the chosen driver build uses) authenticates and returns a session
-  token/cookie for subsequent statements.
+> **Contract:** header `x-qod-authorization` (fallback `Authorization`); values:
+>
+> | PBI credential kind | header value | Quack validator |
+> |---|---|---|
+> | `UsernamePassword` | `Basic base64(user:pass)` | `DatabaseAuthenticator` (BCrypt vs `qodstate_user.password_hash`) |
+> | `Key` (static JWT) | `Bearer <jwt>` | `JwtBearerAuthenticator` (HS256 / RS256 / PEM) |
+> | `OAuth` (OIDC) | `Bearer <access_token>` | `OidcBearerAuthenticator` (Keycloak / Google / Azure / Cognito JWKS) |
+>
+> All three are wired and covered by `FlightHandshakeSecuritySpec`. The connector
+> injects the header via `CredentialConnectionString` so the Dremio driver skips its
+> Flight Handshake (see R4a) and the secret stays out of the connection string.
 
-### R3 — Static access token / JWT (Bearer) **(confirm)**
-- Flight SQL handshake / per-call `authorization: Bearer <jwt>`, validated against
-  Quack's external JWT backend (HS256/RS256).
-- **Acceptance:** ODBC connection with the driver's `token` property authenticates;
-  an expired/invalid token yields an `UNAUTHENTICATED` error the connector can show.
+### R2 — Username / password (Basic) **(done — padding-agnostic decode)**
+- `x-qod-authorization: Basic base64(user:pass)` validated by `DatabaseAuthenticator`
+  (BCrypt against `qodstate_user.password_hash`).
+- **Decode Base64 padding-agnostically.** The ODBC connector emits the value
+  **unpadded** (trailing `=` stripped, to avoid the `key=value` connection-string
+  split); the ADBC path sends it **padded**. Use a lenient decoder that accepts both.
+- **Acceptance:** authenticates with padded (ADBC) or unpadded (ODBC) Base64; a bad
+  user/password yields `UNAUTHENTICATED`. ✅ verified in Power BI Desktop (`alice`).
 
-### R4 — OAuth 2.0 / OIDC access token **(confirm)**
+### R3 — Static access token / JWT (Bearer) **(done — server side)**
+- `Authorization: Bearer <jwt>` validated by `JwtBearerAuthenticator`
+  (HS256 / RS256 / PEM key).
+- **Acceptance:** a valid JWT authenticates; an expired/invalid token yields
+  `UNAUTHENTICATED`. Validate the connector's `Key` path over ADBC (per §11).
+
+### R4 — OAuth 2.0 / OIDC access token **(done — server side)**
 - The connector runs the OIDC authorization-code + PKCE flow in Power BI, obtains
-  an `access_token`, and presents it as a Bearer token exactly as R3.
+  an `access_token`, and presents it as `Authorization: Bearer <access_token>` —
+  validated by `OidcBearerAuthenticator` against the per-tenant/global JWKS.
 - **Acceptance:** a token issued by the configured OIDC provider (Keycloak / Entra
-  ID / Google / Cognito) is accepted by Quack's OIDC validation.
+  ID / Google / Cognito) is accepted.
 - **(confirm)** Required token **audience**, **issuer**, and **scopes** for Quack.
   Please provide these so we can configure the connector (`OAuthConfig`).
 
+### R4a — Per-call credential header **(done)**
+Quack reads the credential from a call header on **every RPC** (no Flight
+Handshake). The connector routes it via `CredentialConnectionString`, which stops
+Power BI auto-injecting `UID`/`PWD` — otherwise the Dremio driver runs a Handshake
+*before* `tenant`/`pool` are attached and login fails. The server reads
+**`x-qod-authorization`** first, falling back to **`Authorization`**.
+- **Acceptance:** authenticates whether the credential arrives under
+  `x-qod-authorization` or `Authorization`, for all three kinds. ✅ verified in
+  Power BI Desktop (Dremio ODBC, `alice` Basic).
+
 ### R5 — Per-statement auth continuity **(confirm)**
-Quack authenticates at handshake **and per statement**. The ODBC driver must be
-able to carry the session forward (auth token / cookie) across `Execute` calls.
-- **Acceptance:** a multi-statement session (metadata browse → query → query) does
-  not re-prompt or fail mid-session due to lost auth context.
-- Please confirm whether Quack issues a **session/bearer token at handshake** that
-  the driver should replay, and its **lifetime** (so refresh can be scheduled).
+Because auth is validated **per call** from the `Authorization` header, every RPC
+carries its own credential — there is no handshake-issued session token the driver
+must replay. The connector re-sends the header on each call.
+- **Acceptance:** a multi-statement session (metadata browse → query → query)
+  authenticates each call and does not re-prompt or fail mid-session. ✅ multi-
+  statement session held (ADBC).
+- **(confirm)** Whether Quack additionally issues a session/bearer token the client
+  *may* cache to skip per-call re-validation (optimization only — not required by
+  the per-call contract above).
 
 ---
 
@@ -206,57 +237,14 @@ exercised.
 - **Acceptance:** a documented connection string per auth mode that connects to
   your test instance.
 
-### R15 — Complete `GetSqlInfo` response so ODBC `SQLGetInfo` resolves **(change)**
-**Blocking — found loading the connector in Power BI Desktop (2026-06-17).** As soon
-as Power Query connects, it calls `SQLGetInfo(SQL_DBMS_NAME)` (ODBC info type 17).
-The Arrow Flight SQL ODBC driver answers ODBC `SQLGetInfo` from the server's Flight
-SQL **`GetSqlInfo`** response, and it returned:
-
-```
-ERROR [HY000] [Apache Arrow][Flight SQL] (100) Unknown GetInfo type: 17
-```
-
-Power Query **cannot** override `SQL_DBMS_NAME` from the connector (its `SQLGetInfo`
-override allows only capability flags, not identity strings), so this must be fixed
-server-side (or by a newer driver build — see note).
-
-Today `FlightProducerImpl.sqlInfoBuilder` populates only ~13 `SqlInfo` codes
-(server name/version/arrow-version, read-only/sql/substrait, identifier quote char,
-3 DDL flags, empty keywords). The driver builds its `SQLGetInfo` cache from this
-response; codes Quack omits surface as `Unknown GetInfo type: N` for the mapped ODBC
-types.
-
-**Ask:** expand `sqlInfoBuilder` to return the **full standard set** the Arrow Flight
-SQL ODBC driver consumes. At minimum, beyond what's already set:
-
-| Flight `SqlInfo` | `SqlInfoBuilder` setter | Suggested value (DuckDB) |
-|---|---|---|
-| `SQL_IDENTIFIER_CASE` | `withSqlIdentifierCase` | case-insensitive / lower |
-| `SQL_QUOTED_IDENTIFIER_CASE` | `withSqlQuotedIdentifierCase` | case-sensitive |
-| `SQL_SEARCH_STRING_ESCAPE` | `withSqlSearchStringEscape` | `\` |
-| `SQL_NULL_ORDERING` | `withSqlNullOrdering` | nulls high/low per DuckDB |
-| `SQL_KEYWORDS` | `withSqlKeywords` | DuckDB non-SQL92 keywords |
-| `SQL_NUMERIC_FUNCTIONS` / `SQL_STRING_FUNCTIONS` / `SQL_SYSTEM_FUNCTIONS` / `SQL_DATETIME_FUNCTIONS` | `withSql*Functions` | bitmasks for supported scalar fns |
-| `SQL_SUPPORTS_CONVERT` | `withSqlSupportsConvert` | supported CAST conversions |
-| `SQL_MAX_*` (column/table name length, columns in select, etc.) | `withSqlMax*` | DuckDB limits (0 = no limit) |
-| `SQL_TRANSACTIONS_SUPPORTED` / isolation | `withSqlTransactions*` | per DuckDB |
-| `SQL_SUPPORTED_GROUP_BY` / `SQL_SUPPORTED_UNIONS` / `SQL_OUTER_JOINS_SUPPORT_LEVEL` | `withSql*` | per DuckDB |
-
-**UPDATE 2026-06-17 — Quack expanded `sqlInfoBuilder` to the full set; this did NOT
-fix the ODBC probe. Root cause is now proven to be the DRIVER, not the server:**
-
-- Against the **same redeployed instance**, an ADBC Flight SQL client read
-  `FLIGHT_SQL_SERVER_NAME` out of `GetSqlInfo` and surfaced it as
-  `vendor_name = "Quack on Demand"`. So the data backing `SQL_DBMS_NAME` **is present
-  in the server response**.
-- The Dremio Arrow Flight SQL **ODBC** driver, given that same response, still errors
-  `Unknown GetInfo type: 17`. Same server, same `GetSqlInfo`: ADBC resolves it, ODBC
-  does not → the installed (old) Dremio ODBC build simply doesn't map ODBC info type
-  17 to the server name.
-
-**Resolution moves to the driver (see R13): use a newer Arrow Flight SQL ODBC driver
-build.** No further server change is needed for this symptom. The `sqlInfoBuilder`
-expansion is good to keep — *except* the regression below.
+### R15 — `SQLGetInfo(SQL_DBMS_NAME)` resolves **(driver gap → R13)**
+On connect, Power Query calls `SQLGetInfo(SQL_DBMS_NAME)` (info 17) and the Dremio
+ODBC build errors `Unknown GetInfo type: 17`. The data **is** present server-side —
+an ADBC client reads `FLIGHT_SQL_SERVER_NAME` from `GetSqlInfo` as
+`vendor_name="Quack on Demand"` — and the connector can't override identity strings.
+So this is a **driver gap**, not a server gap. Resolution: a newer Arrow Flight SQL
+ODBC build (R13). No further server change needed (`sqlInfoBuilder` is already
+expanded — keep it, except the R15a regression below).
 
 ### R15a — Do NOT advertise transaction support that isn't implemented **(regression)**
 The expansion added `withFlightSqlServerTransaction(SQL_SUPPORTED_TRANSACTION_TRANSACTION)`,
@@ -289,10 +277,11 @@ Please provide:
 | # | Requirement | Type | Status |
 |---|-------------|------|--------|
 | R1 | tenant/pool via gRPC call-header metadata | confirm | ✅ verified live (routed to `acme_tpch`) |
-| R2 | Username/password (Basic) | confirm | ✅ verified live (`alice` Basic handshake) |
-| R3 | JWT bearer token | confirm | server-side — not yet exercised |
-| R4 | OIDC access token + audience/issuer/scopes | confirm | server-side — not yet exercised |
-| R5 | Per-statement auth continuity + token lifetime | confirm | ✅ multi-statement session held |
+| R2 | Username/password (Basic) | done | ✅ verified in Power BI Desktop (`alice`); server decodes Base64 padding-agnostically |
+| R3 | Static JWT → Bearer | done (server) | ✅ `JwtBearerAuthenticator` wired; exercise connector `Key` path over ADBC |
+| R4 | OIDC token → Bearer (+ audience/issuer/scopes) | done (server) | ✅ `OidcBearerAuthenticator` wired; needs aud/iss/scopes to configure `OAuthConfig` |
+| R4a | Per-call credential header (`x-qod-authorization`) | done | ✅ **verified in Power BI Desktop** — credential via `CredentialConnectionString`, no Handshake, creds on every call |
+| R5 | Per-statement auth continuity (per-call header) | confirm | ✅ multi-statement session held (ADBC) |
 | R6 | Catalog/schema/table discovery (RBAC-scoped) | confirm | ✅ verified live (`information_schema`) |
 | R7 | Type metadata (`GetXdbcTypeInfo` catalog) | done | ✅ verified live (DECIMAL/BIGINT/DOUBLE round-trip) |
 | R8 | SQL pushdown / DirectQuery folding | confirm | 🟡 server executes folded shapes; M-engine fold pending `.mez` |
@@ -336,64 +325,25 @@ environment exists:
 
 ## 11. Live validation log
 
-**2026-06-17 — dev instance (`:31338`, TLS).** Exercised the connector's exact wire
-contract with an ADBC Flight SQL client (same Flight SQL protocol as the ODBC path):
-TLS + Basic auth (`alice`) + `tenant=acme`/`pool=bi` as RPC call headers.
+**ADBC Flight SQL client (dev instance, TLS)** — same Flight SQL protocol as the
+ODBC path: TLS + Basic auth (`alice`) + `tenant=acme`/`pool=bi` as call headers.
 
-- **R1/R2 routing + auth** — handshake succeeded; `information_schema` resolved to
-  catalog `__ducklake_metadata_acme_tpch`, confirming `tenant=acme` routed to the
-  correct DuckLake. This is the empirical confirmation that tenant/pool-as-gRPC-
-  headers (not `database`/`schema`) is the right contract.
-- **R6 discovery** — `information_schema.tables` enumerated; TPC-H data under schema
-  `tpch1`.
-- **R7 types** — a `GROUP BY` aggregate over `tpch1.lineitem` round-tripped
-  `DECIMAL(38,2)` → `decimal128(38,2)`, `COUNT` → `int64`, `AVG` → `double`,
-  `VARCHAR` → `string`. No truncation.
-- **R8 (server half)** — the folded **shape** the connector emits (projection +
-  `WHERE` on a `DATE` literal + `GROUP BY` + `COUNT`/`SUM`/`AVG` + `ORDER BY` +
-  `LIMIT`) executed correctly in DuckDB. The remaining R8 work is confirming Power
-  Query's M engine *produces* this SQL, which needs the built `.mez` in Desktop.
-- **R12 errors** — observed distinct `UNAUTHENTICATED` (unknown user) and
-  `NOT_FOUND` (unqualified table, with a "did you mean `tpch1.lineitem`?" hint),
-  matching the documented `RouterFailure` → `CallStatus` mapping.
+- **R1/R2 routing + auth** — `tenant=acme` routed to catalog
+  `__ducklake_metadata_acme_tpch`.
+- **R6 discovery** — `information_schema.tables` enumerated; TPC-H under schema `tpch1`.
+- **R7 types** — `GROUP BY` over `tpch1.lineitem` round-tripped `DECIMAL(38,2)`,
+  `COUNT`→`int64`, `AVG`→`double`, `VARCHAR`→`string`; no truncation.
+- **R8 (server half)** — projection + `WHERE` (DATE literal) + `GROUP BY` +
+  `COUNT`/`SUM`/`AVG` + `ORDER BY` + `LIMIT` executed correctly in DuckDB.
+- **R12 errors** — distinct `UNAUTHENTICATED` and `NOT_FOUND` observed.
 
-**Not yet exercised:** JWT (R3) / OAuth (R4) auth paths; full-table Import (R10);
-certificate verification on (R11, dev cert is self-signed `CN=localhost`).
+**Power BI Desktop over the Dremio ODBC driver** — `UsernamePassword` (`alice`)
+authenticates end-to-end. The credential rides `CredentialConnectionString`, so the
+driver skips its Handshake and every RPC carries `tenant`/`pool`/`x-qod-authorization`
+(R4a verified). Connector-side fixes that landed along the way: `Duration` timeouts
+(`#duration`), separate `tenant`/`pool` props (not packed `RPCCallHeaders`), and the
+required `trustServerCertificate` parameter.
 
-**2026-06-17 — Power BI Desktop, real `.mez` over the Dremio Arrow Flight SQL ODBC
-driver.** Built `QoD.mez` (MakePQX), loaded it in Desktop against the dev instance.
-Peeled through several layers; each connector-side bug was fixed and is now in the
-code:
-
-1. `ConnectionTimeout`/`CommandTimeout` must be `Duration`, not Int → wrapped in
-   `#duration`.
-2. tenant/pool as a packed `RPCCallHeaders="…;…"` value corrupted the connection
-   string (`Missing required properties: host, port`) → switched to separate
-   `tenant`/`pool` props (Dremio build auto-forwards unknown keys as gRPC headers).
-3. TLS: `disableCertificateVerification` honored with `TrustServerCertificate = true`
-   against the self-signed dev cert.
-4. **Blocked at R15:** the driver then errored `Unknown GetInfo type: 17`
-   (`SQL_DBMS_NAME`) — not connector-fixable (Power Query won't override identity
-   `SQLGetInfo` values). Handed to the Quack team as **R15**.
-
-**2026-06-17 (later) — R15 server fix shipped; root cause proven to be the driver.**
-Quack expanded `sqlInfoBuilder` to the full `SqlInfo` set and redeployed. Power BI
-**still** errored `Unknown GetInfo type: 17`. Decisive check: against the same
-redeployed instance, the ADBC client read `vendor_name = "Quack on Demand"` (i.e.
-`FLIGHT_SQL_SERVER_NAME` from `GetSqlInfo`). So the `SQL_DBMS_NAME` source is in the
-server response — the **ODBC driver** just doesn't map it. Conclusion: the installed
-(old) Dremio Arrow Flight SQL ODBC build is the blocker → needs a newer driver (R13).
-The redeploy also surfaced **R15a**: the new build advertises transaction support it
-doesn't implement, so ADBC fails on autocommit unless `autocommit=true` is forced.
-
-Net: connector M is validated up to the driver's `SQLGetInfo` probe. The two
-remaining gates are **a newer ODBC driver build** (R13/R15) and the **R15a**
-transaction-declaration revert — both outside the connector.
-
-
-
-
-let
-    Source = QoD.Database("192.0.0.2:31338", "acme", "bi", [TrustServerCertificate = true])
-in
-    Source
+**Open:** JWT (R3) / OAuth (R4) paths; full Import (R10); cert verification on (R11);
+DirectQuery fold validation (R8); the `SQLGetInfo(17)` driver wall (R13/R15) and the
+R15a transaction-declaration revert.

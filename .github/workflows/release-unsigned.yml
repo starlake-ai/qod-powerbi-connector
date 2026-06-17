@@ -1,0 +1,84 @@
+name: Release unsigned (RC)
+
+# Builds QoD.mez (a flat zip of the connector source + icons — no Power Query SDK
+# required) and publishes it to GitHub Releases as an UNSIGNED Release Candidate
+# (marked pre-release). M syntax is not SDK-validated here; validate in the dev
+# loop with MakePQX before tagging.
+
+on:
+  push:
+    tags:
+      - 'v*'            # e.g. v1.0.0-rc.1
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag/version for the RC release (e.g. v1.0.0-rc.1)'
+        required: true
+
+permissions:
+  contents: write       # required for creating the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build QoD.mez (flat zip of source + icons)
+        run: |
+          set -euo pipefail
+          mkdir -p dist stage
+          cp src/QoD.pq src/resources.resx stage/
+          cp src/icons/QoD*.png stage/
+          ( cd stage && zip -X ../dist/QoD.mez QoD.pq resources.resx QoD*.png )
+          echo "--- QoD.mez contents ---"
+          unzip -l dist/QoD.mez
+
+      - name: Publish unsigned RC release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+
+          # Asset filename carries the RC/version, e.g. QoD-v1.0.0-rc.1.mez
+          ASSET="QoD-${VERSION}.mez"
+          cp dist/QoD.mez "dist/${ASSET}"
+
+          cat > notes.md <<'EOF'
+          ## QoD — unsigned Release Candidate
+
+          `QoD.mez` is an **unsigned** development build. Installing it requires
+          lowering the Power BI security setting.
+
+          **Install (Power BI Desktop):**
+          1. Copy `QoD.mez` to `Documents\Power BI Desktop\Custom Connectors\`.
+          2. **Options → Security → Data Extensions** → *Allow any extension to
+             load without validation or warning*.
+          3. Restart Power BI Desktop, then **Get Data → QoD (Quack on Demand)**.
+
+          Full instructions: [INSTALL.md](../blob/main/INSTALL.md). To distribute
+          **without** the security downgrade, ship a signed `.pqx` (INSTALL.md
+          Option 3).
+          EOF
+
+          # Create the release (gh creates the tag if it doesn't exist yet);
+          # on re-runs the release already exists, so fall back to uploading.
+          if gh release create "$VERSION" "dist/${ASSET}" \
+               --title "QoD $VERSION — unsigned (Release Candidate)" \
+               --notes-file notes.md \
+               --prerelease; then
+            echo "Created release $VERSION"
+          else
+            echo "Release $VERSION exists — uploading asset"
+            gh release upload "$VERSION" "dist/${ASSET}" --clobber
+          fi

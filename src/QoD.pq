@@ -1,45 +1,23 @@
 // QoD — Quack on Demand Power BI Custom Connector
-// ================================================
-// Connects Power BI / Microsoft Fabric to a Quack on Demand gateway
-// (github.com/starlake-ai/quack-on-demand) over Apache Arrow Flight SQL.
-//
-// Transport today:  Arrow Flight SQL ODBC driver, wrapped by Odbc.DataSource.
-//                   This is the certifiable path and supports DirectQuery + Import.
-// Transport later:  Microsoft's product-side FlightSQL ADBC driver (the "Dremio path").
-//                   See docs/architecture.md — that switch is a certification-time
-//                   enablement, not a change you make in this file.
-//
+// Connects Power BI / Fabric to a Quack on Demand gateway over Apache Arrow
+// Flight SQL via the Arrow Flight SQL ODBC driver. ADBC (the "Dremio path") is
+// the later certification-time transport — see docs/architecture.md.
 [Version = "1.0.0"]
 section QoD;
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
+// Configuration -------------------------------------------------------------
 
-// Name of the ODBC driver exactly as registered on the machine / gateway.
-// Target: the official Apache Arrow C++ Flight SQL ODBC driver (vendor-neutral,
-// actively developed, certifiable). Confirm the exact registered driver name
-// for the build Quack ships, then set it here. (The Dremio build registers as
-// "Arrow Flight SQL ODBC Driver"; the upstream C++ build's name may differ.)
+// ODBC driver name as registered on the machine/gateway (Dremio build shown;
+// confirm for the build Quack ships).
 DriverName = "Arrow Flight SQL ODBC Driver";
 
-// Default Flight SQL port for Quack on Demand.
 DefaultPort = 31338;
 
-// Set to true while developing to surface ODBC connection-string / fold traces.
-EnableTraceOutput = false;
+// Custom header carrying the credential on every call. The server accepts this
+// and standard `Authorization`; an unknown name avoids the driver reserving it.
+AuthHeaderName = "x-qod-authorization";
 
-// DEV ONLY — default for skipping TLS certificate verification, used when the
-// caller doesn't pass options[TrustServerCertificate]. Set true so testing works
-// against the dev server's self-signed cert without threading the flag through
-// every PBI invocation path (the options record isn't part of the data-source
-// path, so PBI drops it on navigator/refresh/TestConnection). MUST be false for
-// certification — by then Quack should present a CA-signed cert (see R11).
-DefaultTrustServerCertificate = true;
-
-// ---------------------------------------------------------------------------
-// Data source function (public surface)
-// ---------------------------------------------------------------------------
+// Data source function ------------------------------------------------------
 
 [DataSource.Kind = "QoD", Publish = "QoD.Publish"]
 shared QoD.Database = Value.ReplaceType(QoDImpl, QoDType);
@@ -66,9 +44,8 @@ QoDType = type function (
             Documentation.SampleValues = {"sales"}
         ]
     ),
-    // Surfaced as a checkbox under "Advanced options" in the Get Data dialog so
-    // the self-signed-cert escape hatch is changeable in Power BI without editing M.
-    optional trustServerCertificate as (
+    // Required, no default — true only for a self-signed dev endpoint.
+    trustServerCertificate as (
         type logical meta [
             Documentation.FieldCaption = Extension.LoadString("TrustCertFieldCaption"),
             Documentation.FieldDescription = Extension.LoadString("TrustCertFieldDescription"),
@@ -84,75 +61,54 @@ QoDType = type function (
     Documentation.Name = Extension.LoadString("DataSourceName")
 ];
 
-QoDImpl = (server as text, tenant as text, pool as text, optional trustServerCertificate as logical, optional options as record) as table =>
+QoDImpl = (server as text, tenant as text, pool as text, trustServerCertificate as logical, optional options as record) as table =>
     let
-        // --- normalize host / port ---------------------------------------
         Address     = Uri.Parts("flight://" & server),
         Host        = Address[Host],
         Port        = if Address[Port] = null or Address[Port] = "" or Address[Port] = 0
                       then DefaultPort
                       else Address[Port],
 
-        // --- advanced options (all optional) -----------------------------
         opts            = options ?? [],
         UseEncryption   = opts[UseEncryption]? ?? true,
-        // Precedence: the Advanced-options checkbox, then the options record, then
-        // the dev default. (?? short-circuits on null = "not supplied".)
-        TrustServerCert = trustServerCertificate ?? opts[TrustServerCertificate]? ?? DefaultTrustServerCertificate,
-        // Timeouts are seconds; Odbc.DataSource expects Duration values (below).
-        ConnectTimeout  = opts[ConnectionTimeout]? ?? 30,
-        QueryTimeout    = opts[CommandTimeout]? ?? 600,
+        TrustServerCert = trustServerCertificate,
+        ConnectTimeout  = opts[ConnectionTimeout]? ?? 30,   // seconds
+        QueryTimeout    = opts[CommandTimeout]? ?? 600,     // seconds
 
-        // --- build the ODBC connection string ----------------------------
+        // tenant/pool only — the credential rides CredentialConnectionString, not this.
         ConnectionString = BuildConnectionString(Host, Port, tenant, pool, UseEncryption, TrustServerCert),
 
-        // --- credential-derived ODBC properties --------------------------
-        // Username/Password -> UID/PWD ; Key/OAuth -> bearer token header.
-        // Odbc.DataSource reads the selected credential via the engine; we
-        // supply the token-bearing properties through CredentialConnectionString.
         Credential       = Extension.CurrentCredential(),
         CredProperties   = CredentialToOdbcProperties(Credential),
 
         OdbcOptions = [
-            // Report driver capabilities so the M engine can fold filters,
-            // projections, joins, aggregations into Flight SQL.
             HierarchicalNavigation = true,
             HideNativeQuery        = false,
             ConnectionTimeout      = #duration(0, 0, 0, ConnectTimeout),
             CommandTimeout         = #duration(0, 0, 0, QueryTimeout),
 
-            // Token / password injected out-of-band from the connection string
-            // so credentials never appear in a saved M query.
-            CredentialConnectionString = CredProperties,
-
-            // SQL dialect / capability shaping (see helpers below).
             SqlCapabilities = SqlCaps,
             SQLGetInfo      = SqlGetInfoOverrides,
             SQLGetFunctions = SqlGetFunctionsOverrides,
             SQLGetTypeInfo  = SqlGetTypeInfoOverrides,
 
-            // Surface ODBC errors with the original SQLSTATE for support.
             ClientConnectionPooling = true,
-
             OnError = OnOdbcError,
-
-            // Trace hook (no-op unless EnableTraceOutput).
             SoftNumbers = true,
-            TolerateConcatOverflow = true
+            TolerateConcatOverflow = true,
+
+            // MUST use CredentialConnectionString: it stops Power BI auto-injecting
+            // UID/PWD, which would trigger a Flight Handshake before tenant/pool are
+            // attached and fail login. See docs/architecture.md + spec R4a / §11.
+            CredentialConnectionString = CredProperties
         ],
 
         Source = Odbc.DataSource(ConnectionString, OdbcOptions)
     in
         Source;
 
-// ---------------------------------------------------------------------------
-// Connection string builder
-// ---------------------------------------------------------------------------
-// Property keys below are taken from the Arrow Flight SQL ODBC driver
-// documentation (Dremio build):
-//   host=...;port=...;useEncryption=1;disableCertificateVerification=1;token=...
-// Booleans are the literals "1"/"0" (NOT "true"/"false"). Verify against the
-// exact driver build Quack ships; the rest of the connector is key-agnostic.
+// Connection string builder -------------------------------------------------
+// Dremio ODBC property keys; booleans are the literals "1"/"0".
 //   ref: https://docs.dremio.com/cloud/sonar/client-apps/drivers/arrow-flight-sql-odbc/
 
 BuildConnectionString = (host as text, port as any, tenant as text, pool as text, useEncryption as logical, trustCert as logical) as record =>
@@ -160,65 +116,50 @@ BuildConnectionString = (host as text, port as any, tenant as text, pool as text
         Driver = DriverName,
         host   = host,
         port   = Text.From(port),
-
-        // TLS — Quack is TLS-enabled by default. Driver expects 1/0.
         useEncryption                  = if useEncryption then "1" else "0",
         disableCertificateVerification = if trustCert then "1" else "0"
     ] & EncodeScope(tenant, pool);
 
-// Quack scope (tenant / pool) is conveyed as native Flight SQL gRPC call headers.
-// This is the SAME contract Quack already honors for its JDBC driver
-// (`?tenant=…&pool=…` → gRPC metadata), so it needs NO server-side change — the
-// gateway routes on the `tenant`/`pool` headers it already understands.
-//
-// Encoding is driver-specific (centralized here so it's a one-line swap):
-//   • Dremio Arrow Flight SQL ODBC build (what Power BI loads today): UNKNOWN
-//     connection properties are auto-forwarded verbatim as gRPC call headers, so
-//     we emit `tenant` and `pool` as plain, separate properties.
-//   • Upstream Apache C++ build: uses an explicit packed `RPCCallHeaders` property
-//     ("tenant=…;pool=…"). DO NOT use that form here — its embedded `;`/`=`
-//     corrupts the `;`-delimited ODBC connection string Power Query builds from
-//     this record (it swallowed `host`/`port` -> driver error "Missing required
-//     properties: host, port"). Separate keys avoid that entirely.
-// See docs/architecture.md ("tenant/pool channel").
+// tenant/pool as separate plain props: the driver auto-forwards unknown keys as
+// gRPC call headers (same routing contract as JDBC). NOT a packed RPCCallHeaders
+// value — its embedded ;/= corrupts the ODBC connection string.
 EncodeScope = (tenant as text, pool as text) as record =>
     [
         tenant = tenant,
         pool   = pool
     ];
 
-// Maps the Power BI credential the user selected to ODBC properties.
-//   UsernamePassword -> UID / PWD
-//   Key (access token / JWT) -> bearer token header
-//   OAuth (OIDC) -> bearer access_token header
+// Maps the selected PBI credential to one auth header (no native UID/PWD/token):
+//   UsernamePassword -> Basic base64(user:pass) ; Key/OAuth -> Bearer <token>
 CredentialToOdbcProperties = (cred as record) as record =>
     let
-        kind = cred[AuthenticationKind]
+        kind = cred[AuthenticationKind],
+        authValue =
+            if kind = "UsernamePassword" then
+                // Strip trailing `=` padding: the driver splits connstring props on
+                // `=`. Server re-pads before BCrypt-decoding (spec R2). Standard
+                // alphabet (not URL-safe — cf. Base64UrlNoPadding for OAuth PKCE).
+                "Basic " & Text.TrimEnd(
+                    Binary.ToText(
+                        Text.ToBinary(cred[Username] & ":" & cred[Password], TextEncoding.Utf8),
+                        BinaryEncoding.Base64),
+                    "=")
+            else if kind = "Key" then
+                "Bearer " & cred[Key]
+            else if kind = "OAuth" then
+                "Bearer " & cred[access_token]
+            else
+                error Error.Record(
+                    "QoD.UnsupportedAuth",
+                    "Unsupported authentication kind: " & kind
+                )
     in
-        if kind = "UsernamePassword" then
-            [ UID = cred[Username], PWD = cred[Password] ]
-        else if kind = "Key" then
-            // JWT / static access token supplied in the single Key field.
-            [ token = cred[Key] ]
-        else if kind = "OAuth" then
-            // OAuth flow stored the bearer token in access_token.
-            [ token = cred[access_token] ]
-        else
-            error Error.Record(
-                "QoD.UnsupportedAuth",
-                "Unsupported authentication kind: " & kind
-            );
+        Record.AddField([], AuthHeaderName, authValue);
 
-// ---------------------------------------------------------------------------
-// ODBC capability shaping (DirectQuery folding)
-// ---------------------------------------------------------------------------
+// ODBC capability shaping (DirectQuery folding) -----------------------------
 
-// IMPORTANT: Quack does NOT support Flight SQL parameter binding
-// (CreatePreparedStatement with bound parameters). The Supports*Literals flags
-// below MUST stay true so the M engine inlines literal values directly into the
-// folded SQL (`… = 'O'`) instead of emitting bound parameters (`… = ?`). Turning
-// any of them off would push the engine onto a parameter-binding path Quack can't
-// execute. See docs/quack-server-spec.md (R9).
+// Supports*Literals MUST stay true: Quack has no parameter binding, so the M
+// engine must inline literals instead of emitting `?` params (spec R9).
 SqlCaps = [
     SupportsTop                   = false,
     LimitClauseKind               = LimitClauseKind.LimitOffset,
@@ -233,18 +174,23 @@ SqlCaps = [
 ];
 
 SqlGetInfoOverrides = [
-    // NOTE: SQL_DBMS_NAME / SQL_DBMS_VER cannot be overridden here — Power Query
-    // only allows capability-flag overrides, not identity strings. The Dremio
-    // Arrow Flight SQL ODBC build erroring on "Unknown GetInfo type: 17"
-    // (SQL_DBMS_NAME) is a DRIVER gap that must be fixed in the driver build.
+    // SQL_DBMS_NAME (info 17) can't be set here (PBI allows only capability flags);
+    // the Dremio build erroring on it is a driver gap.
     SQL_SQL92_PREDICATES    = 0x0000FFFF,
     SQL_AGGREGATE_FUNCTIONS = 0x0000007F,
     SQL_SQL_CONFORMANCE     = 4 /* SQL_SC_SQL92_FULL */,
-    SQL_GROUP_BY            = 2 /* SQL_GB_GROUP_BY_CONTAINS_SELECT */
+    SQL_GROUP_BY            = 2 /* SQL_GB_GROUP_BY_CONTAINS_SELECT */,
+
+    // Force catalog navigation: the Dremio build pre-seeds SQL_CATALOG_NAME="N"
+    // before reading the server, so we override it at the M layer or PBI shows no
+    // catalogs (empty tree).
+    SQL_CATALOG_NAME           = "Y",
+    SQL_CATALOG_TERM           = "database",
+    SQL_CATALOG_NAME_SEPARATOR = ".",
+    SQL_CATALOG_LOCATION       = 1           /* SQL_CL_START */
 ];
 
-// Advertise the scalar/aggregate functions the Flight SQL backend (DuckDB)
-// can fold. Conservative defaults; widen after validating against Quack.
+// Scalar/aggregate functions DuckDB can fold (conservative; widen after validation).
 SqlGetFunctionsOverrides = [
     SQL_CONVERT_FUNCTIONS  = 0x00000002 /* SQL_FN_CVT_CAST */,
     SQL_STRING_FUNCTIONS   = 0x0017FFFF,
@@ -257,31 +203,25 @@ SqlGetTypeInfoOverrides = (types as table) as table => types;
 OnOdbcError = (errorRecord as record) =>
     error errorRecord;
 
-// ---------------------------------------------------------------------------
-// Data Source Kind — authentication & test connection
-// ---------------------------------------------------------------------------
+// Data Source Kind — authentication & test connection -----------------------
 
 QoD = [
-    // TestConnection enables the connector on the on-premises data gateway
-    // and powers refresh in the Power BI service. The returned list is the
-    // data-source function name followed by its required parameters.
+    // Powers gateway/service refresh; must replay all required params, including
+    // trustServerCertificate, or the parameter check fails.
     TestConnection = (dataSourcePath) =>
         let
             json = Json.Document(dataSourcePath)
         in
-            { "QoD.Database", json[server], json[tenant], json[pool] },
+            { "QoD.Database", json[server], json[tenant], json[pool], json[trustServerCertificate] },
 
     Authentication = [
-        // 1. Username / password  -> Quack Postgres/BCrypt backend
         UsernamePassword = [
             Label = Extension.LoadString("AuthUsernamePasswordLabel")
         ],
-        // 2. Access token / JWT   -> Quack external JWT backend
         Key = [
             Label    = Extension.LoadString("AuthKeyLabel"),
             KeyLabel = Extension.LoadString("AuthKeyKeyLabel")
         ],
-        // 3. OAuth 2.0 / OIDC     -> Keycloak / Entra ID / Google / Cognito
         OAuth = [
             StartLogin  = StartLogin,
             FinishLogin = FinishLogin,
@@ -290,17 +230,11 @@ QoD = [
         ]
     ],
 
-    // The connector caches credentials per (server, tenant, pool) tuple.
     Label = Extension.LoadString("DataSourceLabel")
 ];
 
-// ---------------------------------------------------------------------------
-// OAuth 2.0 / OIDC handlers
-// ---------------------------------------------------------------------------
-// Defaults target a generic OIDC provider via the standard authorization-code
-// + PKCE flow. Endpoints, client_id and scopes are read from a bundled config
-// so the same .mez works against Keycloak, Entra ID, Google, or Cognito by
-// editing OAuthConfig (or, post-certification, a provider-discovery call).
+// OAuth 2.0 / OIDC — authorization-code + PKCE. Provider config in OAuthConfig
+// so one .mez serves Keycloak / Entra ID / Google / Cognito.
 
 OAuthConfig = [
     AuthorizeUrl = "https://login.example-oidc.com/authorize",
@@ -376,9 +310,7 @@ Base64UrlNoPadding = (data as binary) as text =>
     in
         Text.TrimEnd(url, "=");
 
-// ---------------------------------------------------------------------------
-// UI publish metadata
-// ---------------------------------------------------------------------------
+// UI publish metadata -------------------------------------------------------
 
 QoD.Publish = [
     Beta                = true,

@@ -1,0 +1,94 @@
+name: Release signed
+
+# Builds QoD.mez, signs it into QoD.pqx with a code-signing certificate stored in
+# repo secrets, and publishes a full (non-prerelease) GitHub Release.
+#
+# Runs on Windows because MakePQX is a .NET Framework Windows executable.
+#
+# Required repository secrets:
+#   SIGNING_PFX_BASE64    - base64 of your code-signing .pfx
+#                           (PowerShell: [Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx")))
+#   SIGNING_PFX_PASSWORD  - password for that .pfx
+#
+# See INSTALL.md Option 3 for creating the certificate and trusting its thumbprint.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag/version for the signed release (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  sign-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build QoD.mez (flat zip of source + icons)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist, stage | Out-Null
+          Copy-Item src/QoD.pq, src/resources.resx stage/
+          Copy-Item src/icons/QoD*.png stage/
+          if (Test-Path dist/QoD.mez) { Remove-Item dist/QoD.mez -Force }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory((Resolve-Path stage), (Join-Path (Resolve-Path dist) 'QoD.mez'))
+
+      - name: Acquire MakePQX (Power Query SDK tools)
+        shell: pwsh
+        run: |
+          # MakePQX ships in the Microsoft.PowerQuery.SdkTools NuGet package.
+          # If your environment can't reach it on the public feed, add the SDK
+          # feed or vendor MakePQX and point $env:MAKEPQX at it instead.
+          nuget install Microsoft.PowerQuery.SdkTools -OutputDirectory pqsdk -ExcludeVersion
+          $mk = Get-ChildItem -Path pqsdk -Recurse -Filter MakePQX.exe | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $mk) { throw "MakePQX.exe not found in the SDK tools package." }
+          "MAKEPQX=$mk" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Decode signing certificate
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.SIGNING_PFX_BASE64 }}
+        run: |
+          if (-not $env:PFX_B64) { throw "Secret SIGNING_PFX_BASE64 is not set." }
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:PFX_B64))
+
+      - name: Pack + sign -> QoD.pqx
+        shell: pwsh
+        env:
+          PFX_PW: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          & $env:MAKEPQX pack --mez dist/QoD.mez --target dist/QoD.pqx --certificate cert.pfx --password $env:PFX_PW
+          if ($LASTEXITCODE -ne 0) { Remove-Item cert.pfx -Force; throw "MakePQX pack failed." }
+          & $env:MAKEPQX verify dist/QoD.pqx
+          $ok = $LASTEXITCODE
+          Remove-Item cert.pfx -Force
+          if ($ok -ne 0) { throw "Signature verification failed." }
+
+      - name: Publish signed release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          $asset = "QoD-$env:VERSION.pqx"
+          Copy-Item dist/QoD.pqx "dist/$asset"
+
+          $url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/blob/main/INSTALL.md"
+          Set-Content notes.md -Encoding utf8 -Value @(
+            "## QoD $env:VERSION (signed)",
+            "",
+            "Signed build (``QoD.pqx``). Installs **without** the security downgrade when the signing certificate's thumbprint is trusted.",
+            "",
+            "Install / trust steps: $url (Option 3)."
+          )
+
+          gh release create "$env:VERSION" "dist/$asset" --title "QoD $env:VERSION (signed)" --notes-file notes.md
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release exists - uploading asset"
+            gh release upload "$env:VERSION" "dist/$asset" --clobber
+          }

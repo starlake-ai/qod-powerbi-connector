@@ -49,6 +49,12 @@ docs/
 CHANGELOG.md           versioned change history
 ```
 
+## Install
+
+See **[INSTALL.md](INSTALL.md)** for full install instructions — building from
+source, dropping in a pre-built **unsigned** `.mez` (dev), or deploying a
+**signed** `.pqx` (production).
+
 ## Build
 
 Use the **VS Code "Power Query SDK"** extension → *Build connector project*, or:

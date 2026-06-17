@@ -91,14 +91,29 @@ QoD connector. This sidesteps the ODBC driver entirely.
 
 ## Credential → transport mapping
 
-| Power BI credential | Quack backend            | ODBC properties injected            |
-|---------------------|--------------------------|-------------------------------------|
-| UsernamePassword    | Postgres / BCrypt        | `UID`, `PWD`                        |
-| Key (access token)  | External JWT (HS/RS256)  | `token` (bearer header)             |
-| OAuth 2.0 / OIDC    | Keycloak/Entra/Google/…  | `token` = OAuth `access_token`      |
+| Power BI credential | Quack backend            | `Authorization` header injected          |
+|---------------------|--------------------------|------------------------------------------|
+| UsernamePassword    | Postgres / BCrypt        | `Basic base64(user:pass)` (unpadded — see spec R2) |
+| Key (access token)  | External JWT (HS/RS256)  | `Bearer <jwt>`                           |
+| OAuth 2.0 / OIDC    | Keycloak/Entra/Google/…  | `Bearer <access_token>`                  |
 
-`tenant` and `pool` are always sent as Flight SQL gRPC call headers via the
-driver's `RPCCallHeaders` passthrough — see "tenant/pool channel" below.
+All three credential kinds collapse to one **`x-qod-authorization` gRPC call
+header**, validated by the server per call. The custom name is used because it is
+unknown to the driver (forwarded verbatim, not reserved/stripped); the server also
+accepts standard `Authorization`. Set via the `AuthHeaderName` constant in `QoD.pq`.
+
+**The credential rides `CredentialConnectionString`, not the base connection
+string.** Supplying our own credential channel stops Power BI from auto-injecting
+`UID`/`PWD` for the `UsernamePassword` kind — which matters because the Dremio
+driver runs the Flight **Handshake** *before* it attaches the unknown call props
+(`tenant`/`pool`/`x-qod-authorization`), so any `UID`/`PWD` it sees triggers a
+Handshake with **no tenant** and login fails. With no `UID`/`PWD` the driver skips
+the Handshake and every call carries the credential header. This also keeps the
+secret out of the saved connection string. (On the ADBC path the driver carries
+auth natively, so this is moot.)
+
+`tenant`/`pool` ride the base connection string as separate props (auto-forwarded
+as gRPC headers) — see "tenant/pool channel" below.
 
 ## Driver connection properties
 
@@ -152,17 +167,9 @@ The connection-string **encoding is driver-specific** (centralized in `EncodeSco
 > The connector uses the **separate-keys** form. The packed `RPCCallHeaders` form
 > must **not** be used with the record Power Query passes to `Odbc.DataSource`: its
 > embedded `;`/`=` corrupt the `;`-delimited ODBC connection string and the driver
-> reports `Missing required properties: host, port`. (Caught loading the `.mez` in
-> Desktop, 2026-06-17.)
+> reports `Missing required properties: host, port`.
 
-> Earlier draft used the `database`→tenant / `schema`→pool catalog properties to
-> avoid depending on ODBC header passthrough. That passthrough is now confirmed
-> available, so we use it: it matches the existing JDBC routing contract, needs no
-> server parse rule, and leaves the SQL-semantic `database`/`schema` keys free for
-> their real catalog/schema meaning.
-
-Implemented in `EncodeScope`; falling back to `database`/`schema` catalog
-properties (if a future driver build lacks `RPCCallHeaders`) is a one-liner.
+Implemented in `EncodeScope`.
 
 ## Open items to verify against the shipped driver build
 - Exact **registered driver name** of the official C++ build (for `Driver=…`).
