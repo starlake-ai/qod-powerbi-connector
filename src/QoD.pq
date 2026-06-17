@@ -39,32 +39,32 @@ shared QoD.Database = Value.ReplaceType(QoDImpl, QoDType);
 QoDType = type function (
     server as (
         type text meta [
-            Documentation.FieldCaption = "Server",
-            Documentation.FieldDescription = "Host of the Quack on Demand gateway (host or host:port). Default port is 31338.",
+            Documentation.FieldCaption = Extension.LoadString("ServerFieldCaption"),
+            Documentation.FieldDescription = Extension.LoadString("ServerFieldDescription"),
             Documentation.SampleValues = {"quack.example.com:31338"}
         ]
     ),
     tenant as (
         type text meta [
-            Documentation.FieldCaption = "Tenant",
-            Documentation.FieldDescription = "Quack tenant to connect to.",
+            Documentation.FieldCaption = Extension.LoadString("TenantFieldCaption"),
+            Documentation.FieldDescription = Extension.LoadString("TenantFieldDescription"),
             Documentation.SampleValues = {"tpch"}
         ]
     ),
     pool as (
         type text meta [
-            Documentation.FieldCaption = "Pool",
-            Documentation.FieldDescription = "Quack node pool to route statements to.",
+            Documentation.FieldCaption = Extension.LoadString("PoolFieldCaption"),
+            Documentation.FieldDescription = Extension.LoadString("PoolFieldDescription"),
             Documentation.SampleValues = {"sales"}
         ]
     ),
     optional options as (
         type record meta [
-            Documentation.FieldCaption = "Advanced options"
+            Documentation.FieldCaption = Extension.LoadString("AdvancedOptionsCaption")
         ]
     )
 ) as table meta [
-    Documentation.Name = "Quack on Demand"
+    Documentation.Name = Extension.LoadString("DataSourceName")
 ];
 
 QoDImpl = (server as text, tenant as text, pool as text, optional options as record) as table =>
@@ -146,18 +146,20 @@ BuildConnectionString = (host as text, port as any, tenant as text, pool as text
         disableCertificateVerification = if trustCert then "1" else "0"
     ] & EncodeScope(tenant, pool);
 
-// Quack scope (tenant / pool) is conveyed through the driver's STANDARD catalog
-// and schema properties rather than custom gRPC call headers, because no current
-// Flight SQL ODBC build reliably forwards arbitrary headers (the JDBC driver does;
-// the ODBC ones don't). `database` and `schema` are honored by every Flight SQL
-// ODBC build, so the connector stays portable; Quack maps them back server-side:
-//     database -> tenant ,  schema -> pool
-// Centralized so an alternate encoding (e.g. dotted `schema=tenant.pool`) is a
-// one-line change. See docs/architecture.md ("tenant/pool channel").
+// Quack scope (tenant / pool) is conveyed as native Flight SQL gRPC call headers
+// via the Arrow Flight SQL ODBC driver's `RPCCallHeaders` passthrough. This is the
+// SAME contract Quack already honors for its JDBC driver (`?tenant=…&pool=…` →
+// gRPC metadata), so it needs NO server-side change — the gateway routes on the
+// `tenant`/`pool` headers it already understands. (Confirmed by the Quack team:
+// the Apache Arrow Flight SQL ODBC build forwards DSN props through
+// `RPCCallHeaders=key=val;key=val`.)
+// Centralized so an alternate encoding (e.g. fall back to `database`/`schema`
+// catalog properties) is a one-line change. See docs/architecture.md
+// ("tenant/pool channel"). The exact header-list delimiter/escaping is confirmed
+// against the shipped driver build at certification.
 EncodeScope = (tenant as text, pool as text) as record =>
     [
-        database = tenant,
-        schema   = pool
+        RPCCallHeaders = "tenant=" & tenant & ";pool=" & pool
     ];
 
 // Maps the Power BI credential the user selected to ODBC properties.
@@ -186,6 +188,12 @@ CredentialToOdbcProperties = (cred as record) as record =>
 // ODBC capability shaping (DirectQuery folding)
 // ---------------------------------------------------------------------------
 
+// IMPORTANT: Quack does NOT support Flight SQL parameter binding
+// (CreatePreparedStatement with bound parameters). The Supports*Literals flags
+// below MUST stay true so the M engine inlines literal values directly into the
+// folded SQL (`… = 'O'`) instead of emitting bound parameters (`… = ?`). Turning
+// any of them off would push the engine onto a parameter-binding path Quack can't
+// execute. See docs/quack-server-spec.md (R9).
 SqlCaps = [
     SupportsTop                   = false,
     LimitClauseKind               = LimitClauseKind.LimitOffset,
@@ -237,12 +245,12 @@ QoD = [
     Authentication = [
         // 1. Username / password  -> Quack Postgres/BCrypt backend
         UsernamePassword = [
-            Label = "Username / password"
+            Label = Extension.LoadString("AuthUsernamePasswordLabel")
         ],
         // 2. Access token / JWT   -> Quack external JWT backend
         Key = [
-            Label    = "Access token (JWT)",
-            KeyLabel = "Access token"
+            Label    = Extension.LoadString("AuthKeyLabel"),
+            KeyLabel = Extension.LoadString("AuthKeyKeyLabel")
         ],
         // 3. OAuth 2.0 / OIDC     -> Keycloak / Entra ID / Google / Cognito
         OAuth = [

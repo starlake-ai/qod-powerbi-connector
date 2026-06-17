@@ -24,38 +24,41 @@ marked **(confirm)** may already work — we just need verification; items marke
 > **Why ODBC, not the JDBC driver you document today:** the Flight SQL *JDBC*
 > driver forwards arbitrary URL params (`tenant`, `pool`) as gRPC headers and
 > supports user/password + token + OAuth. Power BI cannot load a Java/JDBC driver,
-> so we must use an *ODBC* driver — and no ODBC build reliably forwards arbitrary
-> headers. Several requirements below exist to bridge that gap.
+> so we must use an *ODBC* driver. The Arrow Flight SQL ODBC build **does** forward
+> custom gRPC metadata via its `RPCCallHeaders` property, so tenant/pool routing
+> reuses your existing header contract unchanged (see R1). The remaining
+> requirements below are mostly confirmations.
 
 ---
 
 ## 2. Scope routing (tenant / pool)
 
-### R1 — Accept tenant/pool via standard catalog/schema properties **(change)**
-Today Quack takes `tenant` and `pool` as JDBC URL parameters (delivered as gRPC
-call headers). The ODBC path cannot rely on custom headers, so the connector sends
-scope through the **standard Flight SQL catalog/schema connection properties**:
+### R1 — Accept tenant/pool via `RPCCallHeaders` gRPC metadata **(confirm)**
+Today Quack takes `tenant` and `pool` as JDBC URL parameters, delivered as gRPC
+call headers. The connector sends the **same headers** over ODBC through the Arrow
+Flight SQL ODBC driver's `RPCCallHeaders` property:
 
-| Connection property | Quack meaning |
-|---------------------|---------------|
-| `database` (catalog) | `tenant`     |
-| `schema`             | `pool`       |
+```
+RPCCallHeaders = tenant=<tenant>;pool=<pool>
+```
 
-These arrive on the Flight SQL session at connect time (and on `GetFlightInfo` /
-statement requests as the catalog/schema context).
+These arrive as gRPC call metadata on the Flight SQL session — **identical to the
+JDBC path** — so no server-side parsing or mapping is required.
 
 **Acceptance criteria**
-- A Flight SQL client connecting with catalog=`tpch`, schema=`sales` is routed to
-  tenant `tpch`, pool `sales` — identical behavior to the JDBC
+- An ODBC client connecting with `RPCCallHeaders=tenant=tpch;pool=sales` is routed
+  to tenant `tpch`, pool `sales` — identical behavior to the JDBC
   `?tenant=tpch&pool=sales` form.
-- If catalog/schema are omitted, Quack returns a clear error naming the missing
-  scope (not a generic failure).
-- **(confirm)** Quack still also honors the existing `tenant`/`pool` gRPC headers,
-  so the JDBC path is unaffected.
+- If the `tenant`/`pool` headers are absent, Quack returns a clear error naming the
+  missing scope (not a generic failure).
+- **(confirm)** No change to the existing `tenant`/`pool` header handling is needed;
+  the JDBC path is unaffected.
 
-> If a single-property encoding is preferred on your side, we can instead send a
-> dotted `schema=tenant.pool` — tell us which you want; it's a one-line change in
-> the connector. Catalog+schema (above) is our default as it needs no parsing.
+> This supersedes the earlier proposal to route via `database`/`schema` catalog
+> properties (which would have needed a server-side parse rule). Using
+> `RPCCallHeaders` reuses your existing contract and needs **no server change**. If
+> the C++ ODBC build uses a different header-list delimiter than `;`, tell us — it's
+> a one-line change in the connector (`EncodeScope`).
 
 ---
 
@@ -132,11 +135,19 @@ Confirm Quack/DuckDB executes folded SQL for at least:
 **Native Query** and returns correct results from a live Quack instance. We will
 use this to tune the driver's advertised `SQLGetFunctions`/`SqlCapabilities`.
 
-### R9 — Prepared / parameterized statements **(confirm)**
-- Flight SQL `CreatePreparedStatement` / parameter binding works for DirectQuery
-  parameterized execution.
-- **Acceptance:** a parameterized predicate executes without error and binds
-  correctly.
+### R9 — Prepared / parameterized statements **(not supported — handled client-side)**
+Quack does **not** support Flight SQL parameter binding (`CreatePreparedStatement`
+with bound parameters). The connector therefore makes the M engine **inline literal
+values** directly into the folded SQL text instead of binding parameters — enabled
+by the `Supports{Numeric,String,OdbcDate,OdbcTime,OdbcTimestamp}Literals = true`
+flags in `SqlCapabilities` (see `QoD.pq`). No prepared-statement/parameter path is
+exercised.
+- **Acceptance:** a filtered DirectQuery (e.g. `WHERE o_orderstatus = 'O'`) folds to
+  a **Native Query with the literal inlined** (`… = 'O'`, not `… = ?`) and returns
+  correct results — no `CreatePreparedStatement` parameter-binding call is issued.
+- **(confirm)** Quack executes such literal-inlined SQL via the ordinary statement
+  path. If Quack later adds parameter binding, this requirement can be revisited to
+  re-enable it for plan caching.
 
 ### R10 — Result streaming & limits **(confirm)**
 - Large result sets stream via Arrow record batches without server-side row caps
@@ -195,7 +206,7 @@ Please provide:
 
 | # | Requirement | Type |
 |---|-------------|------|
-| R1 | tenant/pool via `database`/`schema` | change |
+| R1 | tenant/pool via `RPCCallHeaders` gRPC metadata | confirm |
 | R2 | Username/password (Basic) | confirm |
 | R3 | JWT bearer token | confirm |
 | R4 | OIDC access token + audience/issuer/scopes | confirm |
@@ -203,13 +214,13 @@ Please provide:
 | R6 | Catalog/schema/table discovery (RBAC-scoped) | confirm |
 | R7 | Type metadata | confirm |
 | R8 | SQL pushdown / DirectQuery folding | confirm |
-| R9 | Prepared/parameterized statements | confirm |
+| R9 | No parameter binding → connector inlines literals | not supported / client-side |
 | R10 | Result streaming without silent caps | confirm |
 | R11 | TLS cert + SNI host | confirm |
 | R12 | Distinct error status codes | confirm |
 | R13 | Recommended ODBC driver + connection strings | confirm |
 | R14 | Public test instance + per-auth credentials | provide |
 
-**Smallest critical path to a working demo:** R1 (scope mapping) + one auth mode
-(R2 *or* R3) + R6 (discovery) + R11 (TLS) + R13 (driver/conn string). The rest
-hardens it for DirectQuery and certification.
+**Smallest critical path to a working demo:** R1 (confirm `RPCCallHeaders` routing —
+no server change) + one auth mode (R2 *or* R3) + R6 (discovery) + R11 (TLS) + R13
+(driver/conn string). The rest hardens it for DirectQuery and certification.

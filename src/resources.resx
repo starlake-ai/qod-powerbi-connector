@@ -26,4 +26,43 @@
   <data name="ButtonHelp" xml:space="preserve">
     <value>Connect to a Quack on Demand gateway over Apache Arrow Flight SQL.</value>
   </data>
+
+  <!-- Data source function caption -->
+  <data name="DataSourceName" xml:space="preserve">
+    <value>Quack on Demand</value>
+  </data>
+
+  <!-- Connection parameter captions / descriptions -->
+  <data name="ServerFieldCaption" xml:space="preserve">
+    <value>Server</value>
+  </data>
+  <data name="ServerFieldDescription" xml:space="preserve">
+    <value>Host of the Quack on Demand gateway (host or host:port). Default port is 31338.</value>
+  </data>
+  <data name="TenantFieldCaption" xml:space="preserve">
+    <value>Tenant</value>
+  </data>
+  <data name="TenantFieldDescription" xml:space="preserve">
+    <value>Quack tenant to connect to.</value>
+  </data>
+  <data name="PoolFieldCaption" xml:space="preserve">
+    <value>Pool</value>
+  </data>
+  <data name="PoolFieldDescription" xml:space="preserve">
+    <value>Quack node pool to route statements to.</value>
+  </data>
+  <data name="AdvancedOptionsCaption" xml:space="preserve">
+    <value>Advanced options</value>
+  </data>
+
+  <!-- Authentication labels -->
+  <data name="AuthUsernamePasswordLabel" xml:space="preserve">
+    <value>Username / password</value>
+  </data>
+  <data name="AuthKeyLabel" xml:space="preserve">
+    <value>Access token (JWT)</value>
+  </data>
+  <data name="AuthKeyKeyLabel" xml:space="preserve">
+    <value>Access token</value>
+  </data>
 </root>

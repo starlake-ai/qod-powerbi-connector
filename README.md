@@ -43,6 +43,7 @@ docs/
   architecture.md      data path + the ADBC upgrade path
   certification.md     Microsoft certification checklist & process
   quack-server-spec.md server-side requirements to hand to the Quack team
+CHANGELOG.md           versioned change history
 ```
 
 ## Build
@@ -67,16 +68,17 @@ dotnet build src/QoD.proj -c Release   # -> bin/Release/QoD.mez
 - **Driver:** official **Apache Arrow C++ Flight SQL ODBC** driver (vendor-neutral,
   maintained, certifiable). See the capability matrix in
   [docs/architecture.md](docs/architecture.md).
-- **tenant/pool:** conveyed via the standard `database`/`schema` properties
-  (`database`→tenant, `schema`→pool), not custom gRPC headers — portable across
-  every ODBC build. Quack maps them back server-side.
+- **tenant/pool:** conveyed as native Flight SQL gRPC call headers via the driver's
+  `RPCCallHeaders` property (`RPCCallHeaders=tenant=…;pool=…`). This reuses the same
+  routing contract Quack already honors for JDBC, so it needs **no server change**.
+  Centralized in `EncodeScope`; falling back to `database`/`schema` is a one-liner.
 
 ## Status / TODO before certification
 
 - [x] Verified Flight SQL ODBC property keys (`host`/`port`/`useEncryption=1|0`/
-      `token`); scope mapping decided (`database`/`schema`).
+      `token`); scope conveyed via `RPCCallHeaders` (no server change needed).
 - [ ] Confirm the official C++ driver's registered name + auth key names as it matures.
-- [ ] Add the `database`→tenant / `schema`→pool parse rule on the Quack server.
+- [ ] Confirm the C++ build's exact `RPCCallHeaders` list delimiter/escaping.
 - [ ] Validate DirectQuery folding against a live Quack instance; widen
       `SQLGetFunctions` to match DuckDB.
 - [ ] Fill in real OIDC endpoints / `client_id` / scopes in `OAuthConfig`.

@@ -64,7 +64,7 @@ change in `QoD.pq`. The connector is structured so the switch is isolated:
 | OAuth 2.0 / OIDC    | Keycloak/Entra/Google/…  | `token` = OAuth `access_token`      |
 
 `tenant` and `pool` are always sent as Flight SQL gRPC call headers via the
-driver's header passthrough.
+driver's `RPCCallHeaders` passthrough — see "tenant/pool channel" below.
 
 ## Driver connection properties
 
@@ -78,6 +78,7 @@ Verified from the Arrow Flight SQL ODBC driver docs
 | `disableCertificateVerification` | `1`/`0` |
 | `useSystemTrustStore`, `trustedCerts` | optional cert config |
 | `token` | personal access token / JWT (bearer) |
+| `RPCCallHeaders` | extra gRPC call metadata, `key=val;key=val` — carries `tenant`/`pool` |
 | `schema` | optional default schema |
 
 Sample: `host=…;port=443;useEncryption=1;disableCertificateVerification=1;token=…`
@@ -91,7 +92,7 @@ No single *ODBC* driver currently covers everything Quack needs. Capability matr
 | User/password | ✅ | ✅ | ⚠️ foundational | ❌ |
 | Token / JWT | ✅ | ❌ | ⚠️ TBD | ✅ |
 | OAuth | ✅ | ❌ | ❌ | ❌ |
-| tenant/pool as headers | ✅ (unknown params → gRPC headers) | ❌ | ⚠️ TBD | ❌ |
+| tenant/pool as headers | ✅ (unknown params → gRPC headers) | ❌ | ✅ via `RPCCallHeaders` | ✅ auto-forwards |
 | Maintained | ✅ | ❌ archived Mar 2026 | ✅ new/official | ✅ |
 | Usable from Power BI (ODBC) | ❌ Java-only | ✅ | ✅ | ✅ |
 
@@ -102,23 +103,35 @@ token-only; JDBC isn't usable from Power BI's M engine.
 
 ## tenant/pool channel (decision)
 
-The only driver that forwards arbitrary properties as gRPC headers is **JDBC**
-(which Power BI can't use). Rather than depend on an undocumented ODBC header
-passthrough, the connector conveys scope through the **standard catalog/schema
-properties** every Flight SQL ODBC build honors:
+The connector sends scope as **native Flight SQL gRPC call headers** through the
+Arrow Flight SQL ODBC driver's documented `RPCCallHeaders` property:
 
 ```
-database -> tenant
-schema   -> pool
+RPCCallHeaders = "tenant=<tenant>;pool=<pool>"
 ```
 
-Quack maps these back to its tenant/pool routing server-side. Implemented in
-`EncodeScope`; swapping to a dotted `schema=tenant.pool` encoding is a one-liner.
+This is the **same contract Quack already honors for its JDBC driver** (where
+`?tenant=…&pool=…` URL params become gRPC metadata), so it needs **no server-side
+change** — the gateway routes on the `tenant`/`pool` headers it already
+understands. The Quack team confirmed the Apache Arrow Flight SQL ODBC build
+forwards DSN props via `RPCCallHeaders` (Dremio's build auto-forwards unknown
+keys; the upstream C++ build exposes the explicit `RPCCallHeaders` property).
+
+> Earlier draft used the `database`→tenant / `schema`→pool catalog properties to
+> avoid depending on ODBC header passthrough. That passthrough is now confirmed
+> available, so we use it: it matches the existing JDBC routing contract, needs no
+> server parse rule, and leaves the SQL-semantic `database`/`schema` keys free for
+> their real catalog/schema meaning.
+
+Implemented in `EncodeScope`; falling back to `database`/`schema` catalog
+properties (if a future driver build lacks `RPCCallHeaders`) is a one-liner.
 
 ## Open items to verify against the shipped driver build
 - Exact **registered driver name** of the official C++ build (for `Driver=…`).
 - **Username/password** key names (`UID`/`PWD` vs `user`/`password`) and **token**
   property support in the C++ build as auth matures.
-- Server-side parse rule in Quack for `database`→tenant / `schema`→pool.
+- Exact `RPCCallHeaders` list delimiter/escaping in the shipped C++ build (the
+  connector sends `tenant=…;pool=…`). No Quack server change needed — it already
+  routes on the `tenant`/`pool` gRPC headers (JDBC contract).
 - Which scalar/aggregate functions DuckDB folds, to widen `SQLGetFunctions`.
 - OIDC endpoints / `client_id` / scopes per deployment (see `OAuthConfig`).

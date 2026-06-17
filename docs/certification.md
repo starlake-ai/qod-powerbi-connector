@@ -25,9 +25,11 @@ checklist and process to get QoD there.
       `SQLGetFunctions` only for functions DuckDB actually supports.
 - [ ] No credentials persisted in the M document; secrets only via
       `Extension.CurrentCredential()` / `CredentialConnectionString`.
-- [ ] Localized strings in `resources.resx`; no hard-coded UI text.
+- [x] Localized strings in `resources.resx`; no hard-coded UI text. All field
+      captions/descriptions and auth labels load via `Extension.LoadString`.
 - [x] Final **brand icons** (downscaled from the official Quack on Demand mark).
-- [ ] Connector **versioned** and changelog maintained.
+- [x] Connector **versioned** (`[Version]` in `QoD.pq`) and changelog maintained
+      (`CHANGELOG.md`).
 
 ## Submission artifacts
 1. The compiled **`.mez`**.
