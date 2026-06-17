@@ -54,6 +54,18 @@ Use the **VS Code "Power Query SDK"** extension → *Build connector project*, o
 dotnet build src/QoD.proj -c Release   # -> bin/Release/QoD.mez
 ```
 
+Both routes use the `Microsoft.PowerQuery.SdkTools.MSBuild` SDK, which the VS Code
+extension provisions (it isn't on public NuGet). For a **headless / CI** build with
+just the `Microsoft.PowerQuery.SdkTools` NuGet package, invoke its `MakePQX` directly:
+
+```sh
+MakePQX compile src -d bin/Release -t QoD.mez   # validates the M + packages
+```
+
+`MakePQX compile` packages the root `.pq` + `resources.resx`; add the `icons/*.png`
+to the resulting `.mez` (a zip) so `Extension.Contents` can resolve them.
+*Verified 2026-06-17: `QoD.pq` compiles clean (no M syntax errors).*
+
 ## Develop / test
 
 1. Build `QoD.mez`.
