@@ -54,6 +54,12 @@
   <data name="AdvancedOptionsCaption" xml:space="preserve">
     <value>Advanced options</value>
   </data>
+  <data name="TrustCertFieldCaption" xml:space="preserve">
+    <value>Trust server certificate</value>
+  </data>
+  <data name="TrustCertFieldDescription" xml:space="preserve">
+    <value>Skip TLS certificate validation. Use only for development or self-signed certificates.</value>
+  </data>
 
   <!-- Authentication labels -->
   <data name="AuthUsernamePasswordLabel" xml:space="preserve">

@@ -66,6 +66,15 @@ QoDType = type function (
             Documentation.SampleValues = {"sales"}
         ]
     ),
+    // Surfaced as a checkbox under "Advanced options" in the Get Data dialog so
+    // the self-signed-cert escape hatch is changeable in Power BI without editing M.
+    optional trustServerCertificate as (
+        type logical meta [
+            Documentation.FieldCaption = Extension.LoadString("TrustCertFieldCaption"),
+            Documentation.FieldDescription = Extension.LoadString("TrustCertFieldDescription"),
+            Documentation.AllowedValues = {true, false}
+        ]
+    ),
     optional options as (
         type record meta [
             Documentation.FieldCaption = Extension.LoadString("AdvancedOptionsCaption")
@@ -75,7 +84,7 @@ QoDType = type function (
     Documentation.Name = Extension.LoadString("DataSourceName")
 ];
 
-QoDImpl = (server as text, tenant as text, pool as text, optional options as record) as table =>
+QoDImpl = (server as text, tenant as text, pool as text, optional trustServerCertificate as logical, optional options as record) as table =>
     let
         // --- normalize host / port ---------------------------------------
         Address     = Uri.Parts("flight://" & server),
@@ -87,7 +96,9 @@ QoDImpl = (server as text, tenant as text, pool as text, optional options as rec
         // --- advanced options (all optional) -----------------------------
         opts            = options ?? [],
         UseEncryption   = opts[UseEncryption]? ?? true,
-        TrustServerCert = opts[TrustServerCertificate]? ?? DefaultTrustServerCertificate,
+        // Precedence: the Advanced-options checkbox, then the options record, then
+        // the dev default. (?? short-circuits on null = "not supplied".)
+        TrustServerCert = trustServerCertificate ?? opts[TrustServerCertificate]? ?? DefaultTrustServerCertificate,
         // Timeouts are seconds; Odbc.DataSource expects Duration values (below).
         ConnectTimeout  = opts[ConnectionTimeout]? ?? 30,
         QueryTimeout    = opts[CommandTimeout]? ?? 600,
