@@ -226,19 +226,19 @@ Please provide:
 
 | # | Requirement | Type | Status |
 |---|-------------|------|--------|
-| R1 | tenant/pool via `RPCCallHeaders` gRPC metadata | confirm | reuses JDBC header contract — no server change |
-| R2 | Username/password (Basic) | confirm | server-side |
-| R3 | JWT bearer token | confirm | server-side |
-| R4 | OIDC access token + audience/issuer/scopes | confirm | server-side |
-| R5 | Per-statement auth continuity + token lifetime | confirm | server-side |
-| R6 | Catalog/schema/table discovery (RBAC-scoped) | confirm | server-side |
-| R7 | Type metadata (`GetXdbcTypeInfo` catalog) | done | ✅ `TypeInfoCatalog` |
-| R8 | SQL pushdown / DirectQuery folding | confirm | ⏳ blocked on live instance (R14) |
+| R1 | tenant/pool via `RPCCallHeaders` gRPC metadata | confirm | ✅ verified live (routed to `acme_tpch`) |
+| R2 | Username/password (Basic) | confirm | ✅ verified live (`alice` Basic handshake) |
+| R3 | JWT bearer token | confirm | server-side — not yet exercised |
+| R4 | OIDC access token + audience/issuer/scopes | confirm | server-side — not yet exercised |
+| R5 | Per-statement auth continuity + token lifetime | confirm | ✅ multi-statement session held |
+| R6 | Catalog/schema/table discovery (RBAC-scoped) | confirm | ✅ verified live (`information_schema`) |
+| R7 | Type metadata (`GetXdbcTypeInfo` catalog) | done | ✅ verified live (DECIMAL/BIGINT/DOUBLE round-trip) |
+| R8 | SQL pushdown / DirectQuery folding | confirm | 🟡 server executes folded shapes; M-engine fold pending `.mez` |
 | R9 | No parameter binding → connector inlines literals | not supported / client-side | handled in connector |
-| R10 | Result streaming without silent caps | confirm | server-side |
-| R11 | TLS cert + SNI host | confirm | ⏳ infra — production CA cert (deploy) |
-| R12 | Distinct error status codes (`RouterFailure`) | done | ✅ `RouterFailure` |
-| R13 | Recommended ODBC driver + connection strings | confirm | ⏳ blocked on live instance (R14) |
+| R10 | Result streaming without silent caps | confirm | 🟡 58M-row table aggregated; full Import not yet run |
+| R11 | TLS cert + SNI host | confirm | ⏳ infra — dev cert is self-signed `CN=localhost` |
+| R12 | Distinct error status codes (`RouterFailure`) | done | ✅ verified live (UNAUTHENTICATED, NOT_FOUND observed) |
+| R13 | Recommended ODBC driver + connection strings | confirm | ⏳ blocked — needs the C++ ODBC driver build |
 | R14 | Public test instance + per-auth credentials | provide | ⏳ infra — required for certification |
 
 **Smallest critical path to a working demo:** R1 (confirm `RPCCallHeaders` routing —
@@ -264,4 +264,35 @@ environment exists:
   connector validates without `disableCertificateVerification`. A deploy decision.
 - **R13 — driver-build confirmations**: the live instance lets us lock the exact
   registered driver name, auth property keys, and connection-string shape per auth
-  mode.
+  mode. Still needs the **C++ ODBC driver** specifically (the run below used the
+  ADBC Flight SQL driver, which speaks the same protocol but isn't the ODBC build
+  Power BI loads).
+
+---
+
+## 11. Live validation log
+
+**2026-06-17 — dev instance (`:31338`, TLS).** Exercised the connector's exact wire
+contract with an ADBC Flight SQL client (same Flight SQL protocol as the ODBC path):
+TLS + Basic auth (`alice`) + `tenant=acme`/`pool=bi` as RPC call headers.
+
+- **R1/R2 routing + auth** — handshake succeeded; `information_schema` resolved to
+  catalog `__ducklake_metadata_acme_tpch`, confirming `tenant=acme` routed to the
+  correct DuckLake. This is the empirical confirmation that tenant/pool-as-gRPC-
+  headers (not `database`/`schema`) is the right contract.
+- **R6 discovery** — `information_schema.tables` enumerated; TPC-H data under schema
+  `tpch1`.
+- **R7 types** — a `GROUP BY` aggregate over `tpch1.lineitem` round-tripped
+  `DECIMAL(38,2)` → `decimal128(38,2)`, `COUNT` → `int64`, `AVG` → `double`,
+  `VARCHAR` → `string`. No truncation.
+- **R8 (server half)** — the folded **shape** the connector emits (projection +
+  `WHERE` on a `DATE` literal + `GROUP BY` + `COUNT`/`SUM`/`AVG` + `ORDER BY` +
+  `LIMIT`) executed correctly in DuckDB. The remaining R8 work is confirming Power
+  Query's M engine *produces* this SQL, which needs the built `.mez` in Desktop.
+- **R12 errors** — observed distinct `UNAUTHENTICATED` (unknown user) and
+  `NOT_FOUND` (unqualified table, with a "did you mean `tpch1.lineitem`?" hint),
+  matching the documented `RouterFailure` → `CallStatus` mapping.
+
+**Not yet exercised:** JWT (R3) / OAuth (R4) auth paths; full-table Import (R10); the
+C++ **ODBC** driver build (R13); certificate verification on (R11, dev cert is
+self-signed `CN=localhost`).
