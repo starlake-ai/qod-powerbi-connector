@@ -206,6 +206,53 @@ exercised.
 - **Acceptance:** a documented connection string per auth mode that connects to
   your test instance.
 
+### R15 — Complete `GetSqlInfo` response so ODBC `SQLGetInfo` resolves **(change)**
+**Blocking — found loading the connector in Power BI Desktop (2026-06-17).** As soon
+as Power Query connects, it calls `SQLGetInfo(SQL_DBMS_NAME)` (ODBC info type 17).
+The Arrow Flight SQL ODBC driver answers ODBC `SQLGetInfo` from the server's Flight
+SQL **`GetSqlInfo`** response, and it returned:
+
+```
+ERROR [HY000] [Apache Arrow][Flight SQL] (100) Unknown GetInfo type: 17
+```
+
+Power Query **cannot** override `SQL_DBMS_NAME` from the connector (its `SQLGetInfo`
+override allows only capability flags, not identity strings), so this must be fixed
+server-side (or by a newer driver build — see note).
+
+Today `FlightProducerImpl.sqlInfoBuilder` populates only ~13 `SqlInfo` codes
+(server name/version/arrow-version, read-only/sql/substrait, identifier quote char,
+3 DDL flags, empty keywords). The driver builds its `SQLGetInfo` cache from this
+response; codes Quack omits surface as `Unknown GetInfo type: N` for the mapped ODBC
+types.
+
+**Ask:** expand `sqlInfoBuilder` to return the **full standard set** the Arrow Flight
+SQL ODBC driver consumes. At minimum, beyond what's already set:
+
+| Flight `SqlInfo` | `SqlInfoBuilder` setter | Suggested value (DuckDB) |
+|---|---|---|
+| `SQL_IDENTIFIER_CASE` | `withSqlIdentifierCase` | case-insensitive / lower |
+| `SQL_QUOTED_IDENTIFIER_CASE` | `withSqlQuotedIdentifierCase` | case-sensitive |
+| `SQL_SEARCH_STRING_ESCAPE` | `withSqlSearchStringEscape` | `\` |
+| `SQL_NULL_ORDERING` | `withSqlNullOrdering` | nulls high/low per DuckDB |
+| `SQL_KEYWORDS` | `withSqlKeywords` | DuckDB non-SQL92 keywords |
+| `SQL_NUMERIC_FUNCTIONS` / `SQL_STRING_FUNCTIONS` / `SQL_SYSTEM_FUNCTIONS` / `SQL_DATETIME_FUNCTIONS` | `withSql*Functions` | bitmasks for supported scalar fns |
+| `SQL_SUPPORTS_CONVERT` | `withSqlSupportsConvert` | supported CAST conversions |
+| `SQL_MAX_*` (column/table name length, columns in select, etc.) | `withSqlMax*` | DuckDB limits (0 = no limit) |
+| `SQL_TRANSACTIONS_SUPPORTED` / isolation | `withSqlTransactions*` | per DuckDB |
+| `SQL_SUPPORTED_GROUP_BY` / `SQL_SUPPORTED_UNIONS` / `SQL_OUTER_JOINS_SUPPORT_LEVEL` | `withSql*` | per DuckDB |
+
+> **Note (driver vs server):** Quack already sets `FlightSqlServerName`, which a
+> conformant driver maps directly to `SQL_DBMS_NAME` — so this *may* instead be a gap
+> in the installed (older) Dremio driver build. Populating the full `GetSqlInfo` set
+> is the low-risk server-side action and is good for every Flight SQL ODBC/JDBC
+> client regardless; if it doesn't resolve the probe, the fallback is a newer Arrow
+> Flight SQL ODBC driver build.
+
+**Acceptance:** Power BI Desktop connects past the `SQLGetInfo` probe into the
+Navigator; a direct `SQLGetInfo(SQL_DBMS_NAME)` returns a value (e.g. `"Quack on
+Demand"` / `"DuckDB"`) instead of erroring.
+
 ---
 
 ## 8. Certification test environment (Microsoft requirement)
@@ -225,7 +272,7 @@ Please provide:
 
 | # | Requirement | Type | Status |
 |---|-------------|------|--------|
-| R1 | tenant/pool via `RPCCallHeaders` gRPC metadata | confirm | ✅ verified live (routed to `acme_tpch`) |
+| R1 | tenant/pool via gRPC call-header metadata | confirm | ✅ verified live (routed to `acme_tpch`) |
 | R2 | Username/password (Basic) | confirm | ✅ verified live (`alice` Basic handshake) |
 | R3 | JWT bearer token | confirm | server-side — not yet exercised |
 | R4 | OIDC access token + audience/issuer/scopes | confirm | server-side — not yet exercised |
@@ -237,8 +284,9 @@ Please provide:
 | R10 | Result streaming without silent caps | confirm | 🟡 58M-row table aggregated; full Import not yet run |
 | R11 | TLS cert + SNI host | confirm | ⏳ infra — dev cert is self-signed `CN=localhost` |
 | R12 | Distinct error status codes (`RouterFailure`) | done | ✅ verified live (UNAUTHENTICATED, NOT_FOUND observed) |
-| R13 | Recommended ODBC driver + connection strings | confirm | ⏳ blocked — needs the C++ ODBC driver build |
+| R13 | Recommended ODBC driver + connection strings | confirm | 🟡 driver name confirmed (`Arrow Flight SQL ODBC Driver`); conn-string shape mostly nailed |
 | R14 | Public test instance + per-auth credentials | provide | ⏳ infra — required for certification |
+| R15 | Complete `GetSqlInfo` so ODBC `SQLGetInfo` resolves | change | 🔴 **blocking** — driver errors `Unknown GetInfo type: 17` |
 
 **Smallest critical path to a working demo:** R1 (confirm `RPCCallHeaders` routing —
 no server change) + one auth mode (R2 *or* R3) + R6 (discovery) + R11 (TLS) + R13
@@ -292,6 +340,25 @@ TLS + Basic auth (`alice`) + `tenant=acme`/`pool=bi` as RPC call headers.
   `NOT_FOUND` (unqualified table, with a "did you mean `tpch1.lineitem`?" hint),
   matching the documented `RouterFailure` → `CallStatus` mapping.
 
-**Not yet exercised:** JWT (R3) / OAuth (R4) auth paths; full-table Import (R10); the
-C++ **ODBC** driver build (R13); certificate verification on (R11, dev cert is
-self-signed `CN=localhost`).
+**Not yet exercised:** JWT (R3) / OAuth (R4) auth paths; full-table Import (R10);
+certificate verification on (R11, dev cert is self-signed `CN=localhost`).
+
+**2026-06-17 — Power BI Desktop, real `.mez` over the Dremio Arrow Flight SQL ODBC
+driver.** Built `QoD.mez` (MakePQX), loaded it in Desktop against the dev instance.
+Peeled through several layers; each connector-side bug was fixed and is now in the
+code:
+
+1. `ConnectionTimeout`/`CommandTimeout` must be `Duration`, not Int → wrapped in
+   `#duration`.
+2. tenant/pool as a packed `RPCCallHeaders="…;…"` value corrupted the connection
+   string (`Missing required properties: host, port`) → switched to separate
+   `tenant`/`pool` props (Dremio build auto-forwards unknown keys as gRPC headers).
+3. TLS: `disableCertificateVerification` honored with `TrustServerCertificate = true`
+   against the self-signed dev cert.
+4. **Blocked at R15:** the driver then errored `Unknown GetInfo type: 17`
+   (`SQL_DBMS_NAME`) — not connector-fixable (Power Query won't override identity
+   `SQLGetInfo` values). Handed to the Quack team as **R15**.
+
+So the connector M is validated up to the driver's `SQLGetInfo` capability probe;
+clearing R15 (server-side `GetSqlInfo`, or a newer driver build) is the next gate to
+reach the Navigator and the DirectQuery fold check (R8 connector half).
