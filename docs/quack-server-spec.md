@@ -224,23 +224,44 @@ Please provide:
 
 ## 9. Summary checklist
 
-| # | Requirement | Type |
-|---|-------------|------|
-| R1 | tenant/pool via `RPCCallHeaders` gRPC metadata | confirm |
-| R2 | Username/password (Basic) | confirm |
-| R3 | JWT bearer token | confirm |
-| R4 | OIDC access token + audience/issuer/scopes | confirm |
-| R5 | Per-statement auth continuity + token lifetime | confirm |
-| R6 | Catalog/schema/table discovery (RBAC-scoped) | confirm |
-| R7 | Type metadata (`GetXdbcTypeInfo` catalog) | **done** |
-| R8 | SQL pushdown / DirectQuery folding | confirm |
-| R9 | No parameter binding → connector inlines literals | not supported / client-side |
-| R10 | Result streaming without silent caps | confirm |
-| R11 | TLS cert + SNI host | confirm |
-| R12 | Distinct error status codes (`RouterFailure`) | **done** |
-| R13 | Recommended ODBC driver + connection strings | confirm |
-| R14 | Public test instance + per-auth credentials | provide |
+| # | Requirement | Type | Status |
+|---|-------------|------|--------|
+| R1 | tenant/pool via `RPCCallHeaders` gRPC metadata | confirm | reuses JDBC header contract — no server change |
+| R2 | Username/password (Basic) | confirm | server-side |
+| R3 | JWT bearer token | confirm | server-side |
+| R4 | OIDC access token + audience/issuer/scopes | confirm | server-side |
+| R5 | Per-statement auth continuity + token lifetime | confirm | server-side |
+| R6 | Catalog/schema/table discovery (RBAC-scoped) | confirm | server-side |
+| R7 | Type metadata (`GetXdbcTypeInfo` catalog) | done | ✅ `TypeInfoCatalog` |
+| R8 | SQL pushdown / DirectQuery folding | confirm | ⏳ blocked on live instance (R14) |
+| R9 | No parameter binding → connector inlines literals | not supported / client-side | handled in connector |
+| R10 | Result streaming without silent caps | confirm | server-side |
+| R11 | TLS cert + SNI host | confirm | ⏳ infra — production CA cert (deploy) |
+| R12 | Distinct error status codes (`RouterFailure`) | done | ✅ `RouterFailure` |
+| R13 | Recommended ODBC driver + connection strings | confirm | ⏳ blocked on live instance (R14) |
+| R14 | Public test instance + per-auth credentials | provide | ⏳ infra — required for certification |
 
 **Smallest critical path to a working demo:** R1 (confirm `RPCCallHeaders` routing —
 no server change) + one auth mode (R2 *or* R3) + R6 (discovery) + R11 (TLS) + R13
 (driver/conn string). The rest hardens it for DirectQuery and certification.
+
+---
+
+## 10. Outstanding items (infra, not server code)
+
+The Quack server team has delivered the code-level requirements (R7 and R12
+implemented; R1/R9 need no server change). Everything still open is
+**infrastructure or a deploy decision**, not server code, and unblocks once a test
+environment exists:
+
+- **R14 — public test endpoint** *(the unblocker)*: a reachable Quack instance with
+  a tenant/pool, sample data, and per-auth test credentials. Required for Microsoft
+  certification and a prerequisite for R8/R13 below.
+- **R8 — DirectQuery folding validation**: needs the live instance to inspect Power
+  Query's folded **Native Query** and tune the connector's `SQLGetFunctions` /
+  `SqlCapabilities` to DuckDB's real surface.
+- **R11 — TLS certificate**: a production CA-signed cert (+ SNI hostname) so the
+  connector validates without `disableCertificateVerification`. A deploy decision.
+- **R13 — driver-build confirmations**: the live instance lets us lock the exact
+  registered driver name, auth property keys, and connection-string shape per auth
+  mode.
