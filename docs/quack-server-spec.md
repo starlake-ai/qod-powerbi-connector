@@ -242,16 +242,32 @@ SQL ODBC driver consumes. At minimum, beyond what's already set:
 | `SQL_TRANSACTIONS_SUPPORTED` / isolation | `withSqlTransactions*` | per DuckDB |
 | `SQL_SUPPORTED_GROUP_BY` / `SQL_SUPPORTED_UNIONS` / `SQL_OUTER_JOINS_SUPPORT_LEVEL` | `withSql*` | per DuckDB |
 
-> **Note (driver vs server):** Quack already sets `FlightSqlServerName`, which a
-> conformant driver maps directly to `SQL_DBMS_NAME` — so this *may* instead be a gap
-> in the installed (older) Dremio driver build. Populating the full `GetSqlInfo` set
-> is the low-risk server-side action and is good for every Flight SQL ODBC/JDBC
-> client regardless; if it doesn't resolve the probe, the fallback is a newer Arrow
-> Flight SQL ODBC driver build.
+**UPDATE 2026-06-17 — Quack expanded `sqlInfoBuilder` to the full set; this did NOT
+fix the ODBC probe. Root cause is now proven to be the DRIVER, not the server:**
 
-**Acceptance:** Power BI Desktop connects past the `SQLGetInfo` probe into the
-Navigator; a direct `SQLGetInfo(SQL_DBMS_NAME)` returns a value (e.g. `"Quack on
-Demand"` / `"DuckDB"`) instead of erroring.
+- Against the **same redeployed instance**, an ADBC Flight SQL client read
+  `FLIGHT_SQL_SERVER_NAME` out of `GetSqlInfo` and surfaced it as
+  `vendor_name = "Quack on Demand"`. So the data backing `SQL_DBMS_NAME` **is present
+  in the server response**.
+- The Dremio Arrow Flight SQL **ODBC** driver, given that same response, still errors
+  `Unknown GetInfo type: 17`. Same server, same `GetSqlInfo`: ADBC resolves it, ODBC
+  does not → the installed (old) Dremio ODBC build simply doesn't map ODBC info type
+  17 to the server name.
+
+**Resolution moves to the driver (see R13): use a newer Arrow Flight SQL ODBC driver
+build.** No further server change is needed for this symptom. The `sqlInfoBuilder`
+expansion is good to keep — *except* the regression below.
+
+### R15a — Do NOT advertise transaction support that isn't implemented **(regression)**
+The expansion added `withFlightSqlServerTransaction(SQL_SUPPORTED_TRANSACTION_TRANSACTION)`,
+i.e. the server now claims transaction support it does not implement. Clients act on
+it and fail: ADBC errors `IO: failed to update autocommit: rpc error: code =
+Unimplemented` on connect (forcing `autocommit=true` works around it). **Fix:**
+declare `SQL_SUPPORTED_TRANSACTION_NONE` (or actually implement Begin/Commit/Rollback).
+
+**Acceptance:** (R15a) a default client connects without an autocommit/transaction
+error. (R15 original symptom) resolved via the driver update under R13 — a direct
+`SQLGetInfo(SQL_DBMS_NAME)` returns a value instead of erroring.
 
 ---
 
@@ -284,9 +300,10 @@ Please provide:
 | R10 | Result streaming without silent caps | confirm | 🟡 58M-row table aggregated; full Import not yet run |
 | R11 | TLS cert + SNI host | confirm | ⏳ infra — dev cert is self-signed `CN=localhost` |
 | R12 | Distinct error status codes (`RouterFailure`) | done | ✅ verified live (UNAUTHENTICATED, NOT_FOUND observed) |
-| R13 | Recommended ODBC driver + connection strings | confirm | 🟡 driver name confirmed (`Arrow Flight SQL ODBC Driver`); conn-string shape mostly nailed |
+| R13 | Recommended ODBC driver + connection strings | confirm | 🔴 **driver too old** — needs a newer Arrow Flight SQL ODBC build (see R15) |
 | R14 | Public test instance + per-auth credentials | provide | ⏳ infra — required for certification |
-| R15 | Complete `GetSqlInfo` so ODBC `SQLGetInfo` resolves | change | 🔴 **blocking** — driver errors `Unknown GetInfo type: 17` |
+| R15 | Complete `GetSqlInfo` | done (driver gap) | ✅ server expanded; `SQLGetInfo(17)` proven a **driver** gap (ADBC reads the field; ODBC doesn't) → R13 |
+| R15a | Don't advertise unimplemented transactions | regression | 🔴 new build claims txn support → clients fail `Unimplemented` on autocommit |
 
 **Smallest critical path to a working demo:** R1 (confirm `RPCCallHeaders` routing —
 no server change) + one auth mode (R2 *or* R3) + R6 (discovery) + R11 (TLS) + R13
@@ -359,6 +376,24 @@ code:
    (`SQL_DBMS_NAME`) — not connector-fixable (Power Query won't override identity
    `SQLGetInfo` values). Handed to the Quack team as **R15**.
 
-So the connector M is validated up to the driver's `SQLGetInfo` capability probe;
-clearing R15 (server-side `GetSqlInfo`, or a newer driver build) is the next gate to
-reach the Navigator and the DirectQuery fold check (R8 connector half).
+**2026-06-17 (later) — R15 server fix shipped; root cause proven to be the driver.**
+Quack expanded `sqlInfoBuilder` to the full `SqlInfo` set and redeployed. Power BI
+**still** errored `Unknown GetInfo type: 17`. Decisive check: against the same
+redeployed instance, the ADBC client read `vendor_name = "Quack on Demand"` (i.e.
+`FLIGHT_SQL_SERVER_NAME` from `GetSqlInfo`). So the `SQL_DBMS_NAME` source is in the
+server response — the **ODBC driver** just doesn't map it. Conclusion: the installed
+(old) Dremio Arrow Flight SQL ODBC build is the blocker → needs a newer driver (R13).
+The redeploy also surfaced **R15a**: the new build advertises transaction support it
+doesn't implement, so ADBC fails on autocommit unless `autocommit=true` is forced.
+
+Net: connector M is validated up to the driver's `SQLGetInfo` probe. The two
+remaining gates are **a newer ODBC driver build** (R13/R15) and the **R15a**
+transaction-declaration revert — both outside the connector.
+
+
+
+
+let
+    Source = QoD.Database("192.0.0.2:31338", "acme", "bi", [TrustServerCertificate = true])
+in
+    Source

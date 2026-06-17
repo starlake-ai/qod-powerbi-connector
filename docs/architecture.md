@@ -29,18 +29,38 @@ M primitive in the Power Query SDK (as of June 2026).
 
 So a third-party connector built with the SDK uses `Odbc.DataSource`. The QoD
 connector wraps the **Arrow Flight SQL ODBC driver**, which speaks the exact
-protocol Quack exposes. This path:
+protocol Quack exposes. This path supports Import + DirectQuery and is, in
+principle, certifiable.
 
-- works today in Desktop, Service, and the on-premises data gateway;
-- supports **Import and DirectQuery** with query folding;
-- is **certifiable** under Microsoft's connector program.
+### Reality check (2026-06-17): the ODBC driver is too immature
 
-## The ADBC upgrade path (the "Dremio path")
+Loading the built `.mez` in Power BI Desktop against a live Quack instance proved
+the connector M is correct but **the only existing Flight SQL ODBC driver can't
+carry it**:
 
-Dremio's certified connector now uses **"FlightSQL ADBC"**. Because Quack speaks
-the **same protocol** (Arrow Flight SQL), the route to native ADBC is *not* to
-write our own `Adbc.DataSource` — it is to have Microsoft map the QoD connector
-onto their product-side **FlightSQL ADBC driver**, exactly as they did for Dremio.
+- The sole production driver is **Dremio's Arrow Flight SQL ODBC driver** (v0.9.7,
+  Aug 2025 — latest; a 0.9.x **beta**). It is *not* part of Apache Arrow (licensing),
+  so there is no alternative build.
+- On connect, Power Query calls `SQLGetInfo(SQL_DBMS_NAME)`; the driver **errors
+  `Unknown GetInfo type: 17`** (the string is in the driver DLL). Power Query won't
+  let a connector override `SQL_DBMS_NAME`, and Quack already returns the data (an
+  **ADBC** client reads `vendor_name="Quack on Demand"` from the same server). So
+  it's a driver gap — unfixable from the connector or the server.
+
+Net: the ODBC transport is blocked on driver maturity. The viable route is ADBC,
+below. (Driver-build details and the full debugging log live in
+[quack-server-spec.md](quack-server-spec.md) §11 and R13/R15.)
+
+## The ADBC path (the "Dremio path") — now the primary route
+
+Per Microsoft's [ODBC→ADBC transition doc](https://learn.microsoft.com/en-us/power-query/transition-to-adbc)
+(updated 2026-05), Power BI/Fabric ADBC is enabled **only** for first-party
+connectors via `Implementation="2.0"` — and **Dremio's replacement driver is
+"FlightSQL ADBC"**. There is still no `Adbc.DataSource` M primitive and no way for a
+custom `.mez` to opt into ADBC. So the route to native ADBC is *not* a connector
+rewrite — it is to have Microsoft map QoD onto their product-side **FlightSQL ADBC
+driver**, exactly as they did for Dremio. **Quack speaks the same Arrow Flight SQL
+protocol as Dremio**, so the same driver applies unchanged.
 
 That is a **certification-time enablement**, negotiated with Microsoft, not a code
 change in `QoD.pq`. The connector is structured so the switch is isolated:
@@ -49,11 +69,25 @@ change in `QoD.pq`. The connector is structured so the switch is isolated:
 - capability shaping (`SqlCapabilities`, `SQLGetInfo`) is declarative;
 - once enabled, the same `(server, tenant, pool, auth)` surface carries over.
 
-### Timeline drivers
-- **Sep 2026** — Microsoft begins removing the *legacy embedded* ODBC drivers
-  from the service. The Flight SQL ODBC driver QoD bundles is **your own
-  dependency** and is unaffected.
-- **Mar 2027** — those legacy drivers stop shipping with Desktop/gateway.
+### Why this is the right call (not just a fallback)
+
+- **ADBC works against Quack today** — empirically. An ADBC Flight SQL client
+  (same protocol Microsoft's FlightSQL ADBC driver uses) ran the full path against
+  the live instance: TLS, Basic auth, tenant/pool routing, metadata discovery,
+  typed results, and folded `GROUP BY`/aggregate queries. See
+  [quack-server-spec.md](quack-server-spec.md) §11.
+- **The ODBC alternative is blocked** on the immature driver (above).
+- **ODBC is being removed anyway** — Microsoft starts pulling its embedded ODBC
+  drivers **Sep 2026**, fully gone from Desktop/gateway **Mar 2027**. (QoD's bundled
+  Flight SQL ODBC driver is a separate dependency and not directly removed, but the
+  platform's direction of travel is unambiguous.)
+
+### The ask to Microsoft (certification engagement)
+
+Bring three points: (1) Quack is Arrow Flight SQL, **protocol-identical to Dremio**,
+which Microsoft already maps to FlightSQL ADBC; (2) the ADBC path is **validated**
+end-to-end against Quack; (3) request the same **FlightSQL ADBC enablement** for the
+QoD connector. This sidesteps the ODBC driver entirely.
 
 ## Credential → transport mapping
 

@@ -17,10 +17,13 @@ Power BI ──M──▶ QoD.mez ──ODBC──▶ Arrow Flight SQL ODBC driv
 ```
 
 Power BI's M engine consumes **ODBC** (via `Odbc.DataSource`); it has no public
-`Adbc.DataSource` for custom connectors yet. Native ADBC in Power BI exists today
-only through Microsoft's first-party connectors. The route to ADBC for QoD is the
-**"Dremio path"** — a certification-time enablement onto Microsoft's FlightSQL
-ADBC driver. See [docs/architecture.md](docs/architecture.md).
+`Adbc.DataSource` for custom connectors. The connector M is complete and validated,
+**but the only Flight SQL ODBC driver (Dremio's v0.9.7 beta) is too immature** — it
+errors on Power BI's `SQLGetInfo(SQL_DBMS_NAME)` probe, which is unfixable from the
+connector or server. So the chosen route is the **"Dremio path"**: a
+certification-time enablement onto Microsoft's **FlightSQL ADBC** driver (Dremio's
+replacement driver — and Quack speaks the same protocol). **ADBC is proven working
+against Quack end-to-end.** See [docs/architecture.md](docs/architecture.md).
 
 ## Authentication (all three supported)
 
@@ -86,17 +89,29 @@ to the resulting `.mez` (a zip) so `Extension.Contents` can resolve them.
   forwards plain `tenant`/`pool` props as headers (used today); the upstream C++
   build uses an explicit `RPCCallHeaders` property. See [docs/architecture.md](docs/architecture.md).
 
-## Status / TODO before certification
+## Status / path to certification
 
-- [x] Verified Flight SQL ODBC property keys (`host`/`port`/`useEncryption=1|0`/
-      `token`); scope conveyed via `RPCCallHeaders` (no server change needed).
-- [ ] Confirm the official C++ driver's registered name + auth key names as it matures.
-- [ ] Confirm the C++ build's exact `RPCCallHeaders` list delimiter/escaping.
-- [ ] Validate DirectQuery folding against a live Quack instance; widen
-      `SQLGetFunctions` to match DuckDB.
+**Decision (2026-06-17): pivot to the ADBC "Dremio path".** The ODBC transport is
+blocked on driver immaturity (see *How it connects*), so certification goes via
+Microsoft's FlightSQL ADBC enablement rather than the bundled ODBC driver.
+
+- [x] Connector M built (`QoD.mez` via MakePQX) and validated in Desktop up to the
+      driver's `SQLGetInfo` probe — five real bugs found & fixed in the process.
+- [x] **ADBC path proven** end-to-end against a live Quack instance (TLS, Basic auth,
+      tenant/pool routing, discovery, typed + folded queries). See
+      [docs/quack-server-spec.md](docs/quack-server-spec.md) §11.
+- [x] Server requirements delivered by the Quack team (R7 types, R12 errors, R15
+      `GetSqlInfo`); R15a (don't advertise unimplemented transactions) outstanding.
+- [ ] **Engage Microsoft** for FlightSQL ADBC enablement (the Dremio path), bringing
+      the ADBC validation evidence + "same protocol as Dremio" argument.
 - [ ] Fill in real OIDC endpoints / `client_id` / scopes in `OAuthConfig`.
+- [ ] Provide a public test instance + per-auth credentials for certification (R14).
 - [x] Connector icons sourced from the official Quack on Demand brand mark.
-- [ ] Run through [docs/certification.md](docs/certification.md) and submit.
+
+**Parked (ODBC transport):** validate DirectQuery folding in Desktop and confirm the
+ODBC driver's auth key names — both blocked until the Dremio Arrow Flight SQL ODBC
+driver implements `SQLGetInfo(SQL_DBMS_NAME)`. Tracked in
+[docs/quack-server-spec.md](docs/quack-server-spec.md) R13.
 
 ## Notes
 
