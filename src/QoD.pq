@@ -214,6 +214,13 @@ SqlCaps = [
 ];
 
 SqlGetInfoOverrides = [
+    // The Dremio Arrow Flight SQL ODBC build does not implement every SQLGetInfo
+    // type and ERRORS ("Unknown GetInfo type: N") rather than returning a default.
+    // Power Query probes SQL_DBMS_NAME (17) / SQL_DBMS_VER (18) right after connect,
+    // so supply them here to keep the driver from being asked. Backend is DuckDB.
+    SQL_DBMS_NAME           = "DuckDB",
+    SQL_DBMS_VER            = "00.00.0000",
+
     SQL_SQL92_PREDICATES    = 0x0000FFFF,
     SQL_AGGREGATE_FUNCTIONS = 0x0000007F,
     SQL_SQL_CONFORMANCE     = 4 /* SQL_SC_SQL92_FULL */,
