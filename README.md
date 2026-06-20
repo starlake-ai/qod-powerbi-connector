@@ -33,6 +33,9 @@ against Quack end-to-end.** See [docs/architecture.md](docs/architecture.md).
 | Access token (JWT)     | External JWT (HS256/RS256)      |
 | OAuth 2.0 / OIDC       | Keycloak / Entra ID / Google / Cognito |
 
+Per-method setup (including the customer-side Keycloak/OAuth client) is in
+**[docs/authentication.md](docs/authentication.md)**.
+
 ## Layout
 
 ```
@@ -44,6 +47,7 @@ src/
   icons/            connector icons + generator script
 docs/
   architecture.md      data path + the ADBC upgrade path
+  authentication.md    auth methods + IdP (Keycloak/OAuth) setup for customers
   certification.md     Microsoft certification checklist & process
   quack-server-spec.md server-side requirements to hand to the Quack team
 CHANGELOG.md           versioned change history

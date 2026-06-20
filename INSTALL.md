@@ -115,8 +115,31 @@ A signed connector loads **without** lowering the security setting - you keep th
 Power BI's custom-connector trust is thumbprint-allowlist based: a `.pqx` whose
 signing certificate's thumbprint is in the trusted list loads with no downgrade;
 otherwise it won't load under the Recommended setting.
+You need a **code-signing certificate** (`.pfx`, with private key) - either issued
+by your CA, or **self-signed** (below, fine for internal/enterprise distribution).
 
-You need a **code-signing certificate** (`.pfx`, with private key).
+### Create a self-signed code-signing certificate (Windows / PowerShell)
+
+Skip this if you already have a `.pfx` from your CA.
+
+```powershell
+# 1. Generate a self-signed CODE-SIGNING cert in the current user's store
+$cert = New-SelfSignedCertificate -Type CodeSigningCert `
+  -Subject "CN=QoD Connector (self-signed)" `
+  -CertStoreLocation Cert:\CurrentUser\My `
+  -KeyExportPolicy Exportable -KeyUsage DigitalSignature -KeySpec Signature
+
+$cert.Thumbprint        # SHA-1 thumbprint - you'll trust this below
+
+# 2. Export the private key (.pfx, for signing) and the public cert (.cer, for the trust store)
+$pw = ConvertTo-SecureString "changeit" -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath code-signing.pfx -Password $pw
+Export-Certificate    -Cert $cert -FilePath qod-codesign.cer
+```
+
+A self-signed cert does not chain to a trusted root, so on every machine that
+loads the connector you must also import the **public** cert into Trusted Root
+(see the install step below). CA-issued certs skip that.
 
 ### Sign it (publisher)
 
@@ -162,7 +185,13 @@ You need a **code-signing certificate** (`.pfx`, with private key).
    line; deployable org‑wide via Group Policy *“Trusted Certificate Thumbprints”*.)
    The on-prem gateway has an equivalent trusted-thumbprint configuration - consult
    the current Microsoft docs for the exact gateway path on your version.
-4. **Restart** Power BI Desktop (or the gateway service).
+4. **Self-signed certs only:** import the public cert into Trusted Root so the
+   signature chain validates (CA-issued certs skip this):
+
+   ```powershell
+   Import-Certificate -FilePath qod-codesign.cer -CertStoreLocation Cert:\LocalMachine\Root
+   ```
+5. **Restart** Power BI Desktop (or the gateway service).
 
 > Microsoft **certification** is a separate, later step (the public marketplace
 > listing). Self-signing + trusted thumbprint covers internal/enterprise

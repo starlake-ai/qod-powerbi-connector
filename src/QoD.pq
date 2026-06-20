@@ -247,17 +247,66 @@ QoD = [
     Label = Extension.LoadString("DataSourceLabel")
 ];
 
-// OAuth 2.0 / OIDC - authorization-code + PKCE. Provider config in OAuthConfig
-// so one .mez serves Keycloak / Entra ID / Google / Cognito.
+// OAuth 2.0 / OIDC - authorization-code + PKCE.
+//
+// ===========================================================================
+//  EDIT YOUR IDENTITY PROVIDER HERE - this is the ONLY block you change to
+//  point the connector at a different IdP. Replace the six values below, then
+//  rebuild the .mez. Ready-to-paste examples for Azure / AWS / GCP follow.
+//
+//  In every provider, register `RedirectUri` (kept constant below) as an
+//  allowed redirect/callback URL on the OAuth client, or login fails.
+// ===========================================================================
 
 OAuthConfig = [
-    AuthorizeUrl = "https://login.example-oidc.com/authorize",
-    TokenUrl     = "https://login.example-oidc.com/oauth/token",
-    LogoutUrl    = "https://login.example-oidc.com/logout",
+    AuthorizeUrl = "http://192.168.1.113:20900/auth/realms/qod/protocol/openid-connect/auth",
+    TokenUrl     = "http://192.168.1.113:20900/auth/realms/qod/protocol/openid-connect/token",
+    LogoutUrl    = "http://192.168.1.113:20900/auth/realms/qod/protocol/openid-connect/logout",
     ClientId     = "quack-powerbi",
     Scope        = "openid profile email offline_access",
+
+    // Fixed by Power BI - do NOT change. Register this exact value on the IdP.
     RedirectUri  = "https://oauth.powerbi.com/views/oauthredirect.html"
 ];
+
+// ---------------------------------------------------------------------------
+//  PROVIDER EXAMPLES - copy one over the OAuthConfig values above and fill in
+//  the {placeholders}. Each was verified against the provider's OIDC metadata
+//  ({issuer}/.well-known/openid-configuration); confirm yours still matches.
+// ---------------------------------------------------------------------------
+//
+// AZURE - Microsoft Entra ID (v2.0 endpoints)
+//   Register an app; {tenant} = directory (tenant) GUID or "organizations".
+//   {client-id} = Application (client) ID. PKCE-only (no secret) works for a
+//   public client. Scope MUST include offline_access for refresh tokens.
+//     AuthorizeUrl = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
+//     TokenUrl     = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+//     LogoutUrl    = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/logout",
+//     ClientId     = "{client-id}",
+//     Scope        = "openid profile email offline_access",
+//
+// AWS - Cognito (Hosted UI; needs an App client + a Cognito domain)
+//   {domain} = your prefix or custom domain, {region} = e.g. eu-west-1.
+//   {client-id} = the App client ID. Cognito issues a refresh token for the
+//   auth-code grant automatically; offline_access is accepted but not required.
+//     AuthorizeUrl = "https://{domain}.auth.{region}.amazoncognito.com/oauth2/authorize",
+//     TokenUrl     = "https://{domain}.auth.{region}.amazoncognito.com/oauth2/token",
+//     LogoutUrl    = "https://{domain}.auth.{region}.amazoncognito.com/logout",
+//     ClientId     = "{client-id}",
+//     Scope        = "openid profile email",
+//
+// GCP - Google Identity (OAuth client of type "Web application")
+//   {client-id} = "....apps.googleusercontent.com". NOTE: Google does NOT use
+//   the offline_access scope - it returns a refresh token only when the auth
+//   request carries access_type=offline (and prompt=consent on re-consent).
+//   Add those to the StartLogin query string for Google; the "logout" endpoint
+//   below is actually token revocation (POST token), so Logout is best-effort.
+//     AuthorizeUrl = "https://accounts.google.com/o/oauth2/v2/auth",
+//     TokenUrl     = "https://oauth2.googleapis.com/token",
+//     LogoutUrl    = "https://oauth2.googleapis.com/revoke",
+//     ClientId     = "{client-id}.apps.googleusercontent.com",
+//     Scope        = "openid profile email",
+// ---------------------------------------------------------------------------
 
 StartLogin = (resourceUrl, state, display) =>
     let
