@@ -98,7 +98,7 @@ standard `Authorization`.
 
 ### R4 - OAuth 2.0 / OIDC access token **(done - server side)**
 - The connector runs the OIDC authorization-code + PKCE flow in Power BI, obtains
-  an `access_token`, and presents it as `Authorization: Bearer <access_token>` —
+  an `access_token`, and presents it as `Authorization: Bearer <access_token>` -
   validated by `OidcBearerAuthenticator` against the per-tenant/global JWKS.
 - **Acceptance:** a token issued by the configured OIDC provider (Keycloak / Entra
   ID / Google / Cognito) is accepted.
@@ -257,7 +257,7 @@ exercised.
 
 ### R15 - `SQLGetInfo(SQL_DBMS_NAME)` resolves **(driver gap → R13)**
 On connect, Power Query calls `SQLGetInfo(SQL_DBMS_NAME)` (info 17) and the Dremio
-ODBC build errors `Unknown GetInfo type: 17`. The data **is** present server-side —
+ODBC build errors `Unknown GetInfo type: 17`. The data **is** present server-side -
 an ADBC client reads `FLIGHT_SQL_SERVER_NAME` from `GetSqlInfo` as
 `vendor_name="Quack on Demand"` - and the connector can't override identity strings.
 So this is a **driver gap**, not a server gap. Resolution: a newer Arrow Flight SQL
@@ -313,7 +313,7 @@ Please provide:
 | R15 | Complete `GetSqlInfo` | done (driver gap) | ✅ server expanded; `SQLGetInfo(17)` proven a **driver** gap (ADBC reads the field; ODBC doesn't) → R13 |
 | R15a | Don't advertise unimplemented transactions | regression | 🔴 new build claims txn support → clients fail `Unimplemented` on autocommit |
 
-**Smallest critical path to a working demo:** R1 (confirm `RPCCallHeaders` routing —
+**Smallest critical path to a working demo:** R1 (confirm `RPCCallHeaders` routing -
 no server change) + one auth mode (R2 *or* R3) + R6 (discovery) + R11 (TLS) + R13
 (driver/conn string). The rest hardens it for DirectQuery and certification.
 
