@@ -115,6 +115,24 @@ Power BI auto-injecting `UID`/`PWD` - otherwise the Dremio driver runs a Handsha
   `x-qod-authorization` or `Authorization`, for all three kinds. ✅ verified in
   Power BI Desktop (Dremio ODBC, `alice` Basic).
 
+### R4b - System-user ("superuser") mode **(spec - server work pending)**
+The connector sends an optional per-call header **`x-qod-superuser: true`** (ODBC
+key `superuser`, forwarded by the driver; sent **only when requested**, absent =
+false). It is a **request**, not a grant.
+- Quack reads the header on every RPC and elevates the connection to **full object
+  access within the routed tenant/pool** (bypassing normal object/row RBAC) **only
+  if** the per-call authenticated principal is a **configured system user**.
+- The flag never bypasses authentication and never widens scope beyond the routed
+  `tenant`/`pool`. Cross-tenant access is out of scope.
+- A non-system principal that sets the flag gets normal RBAC, or `UNAUTHENTICATED`
+  - server's documented choice.
+- **Acceptance:** a configured system user with `superuser=true` sees every object
+  in the tenant/pool; the same user with the flag off sees normal RBAC; a
+  non-system user with `superuser=true` is unaffected or denied.
+- **(confirm)** The mechanism Quack uses to designate system users (a role/claim,
+  a `qodstate_user` flag, or a config allowlist) - needed to finalize the server
+  side.
+
 ### R5 - Per-statement auth continuity **(confirm)**
 Because auth is validated **per call** from the `Authorization` header, every RPC
 carries its own credential - there is no handshake-issued session token the driver
@@ -281,6 +299,7 @@ Please provide:
 | R3 | Static JWT → Bearer | done (server) | ✅ `JwtBearerAuthenticator` wired; exercise connector `Key` path over ADBC |
 | R4 | OIDC token → Bearer (+ audience/issuer/scopes) | done (server) | ✅ `OidcBearerAuthenticator` wired; needs aud/iss/scopes to configure `OAuthConfig` |
 | R4a | Per-call credential header (`x-qod-authorization`) | done | ✅ **verified in Power BI Desktop** - credential via `CredentialConnectionString`, no Handshake, creds on every call |
+| R4b | System-user mode (`x-qod-superuser`, server-authorized) | spec | 🟡 connector sends header (only when true); server elevation + system-user designation pending |
 | R5 | Per-statement auth continuity (per-call header) | confirm | ✅ multi-statement session held (ADBC) |
 | R6 | Catalog/schema/table discovery (RBAC-scoped) | confirm | ✅ verified live (`information_schema`) |
 | R7 | Type metadata (`GetXdbcTypeInfo` catalog) | done | ✅ verified live (DECIMAL/BIGINT/DOUBLE round-trip) |
@@ -346,4 +365,4 @@ required `trustServerCertificate` parameter.
 
 **Open:** JWT (R3) / OAuth (R4) paths; full Import (R10); cert verification on (R11);
 DirectQuery fold validation (R8); the `SQLGetInfo(17)` driver wall (R13/R15) and the
-R15a transaction-declaration revert.
+R15a transaction-declaration revert; R4b superuser elevation (server).
