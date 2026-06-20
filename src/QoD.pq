@@ -1,7 +1,7 @@
-// QoD — Quack on Demand Power BI Custom Connector
+// QoD - Quack on Demand Power BI Custom Connector
 // Connects Power BI / Fabric to a Quack on Demand gateway over Apache Arrow
 // Flight SQL via the Arrow Flight SQL ODBC driver. ADBC (the "Dremio path") is
-// the later certification-time transport — see docs/architecture.md.
+// the later certification-time transport - see docs/architecture.md.
 [Version = "1.0.0"]
 section QoD;
 
@@ -44,11 +44,20 @@ QoDType = type function (
             Documentation.SampleValues = {"sales"}
         ]
     ),
-    // Required, no default — true only for a self-signed dev endpoint.
+    // Required, no default - true only for a self-signed dev endpoint.
     trustServerCertificate as (
         type logical meta [
             Documentation.FieldCaption = Extension.LoadString("TrustCertFieldCaption"),
             Documentation.FieldDescription = Extension.LoadString("TrustCertFieldDescription"),
+            Documentation.AllowedValues = {true, false}
+        ]
+    ),
+    // Required. A request for system-user mode; the server authorizes it against
+    // the authenticated principal. Normal value is false.
+    superuser as (
+        type logical meta [
+            Documentation.FieldCaption = Extension.LoadString("SuperuserFieldCaption"),
+            Documentation.FieldDescription = Extension.LoadString("SuperuserFieldDescription"),
             Documentation.AllowedValues = {true, false}
         ]
     ),
@@ -61,7 +70,7 @@ QoDType = type function (
     Documentation.Name = Extension.LoadString("DataSourceName")
 ];
 
-QoDImpl = (server as text, tenant as text, pool as text, trustServerCertificate as logical, optional options as record) as table =>
+QoDImpl = (server as text, tenant as text, pool as text, trustServerCertificate as logical, superuser as logical, optional options as record) as table =>
     let
         Address     = Uri.Parts("flight://" & server),
         Host        = Address[Host],
@@ -72,11 +81,12 @@ QoDImpl = (server as text, tenant as text, pool as text, trustServerCertificate 
         opts            = options ?? [],
         UseEncryption   = opts[UseEncryption]? ?? true,
         TrustServerCert = trustServerCertificate,
+        Superuser       = superuser,
         ConnectTimeout  = opts[ConnectionTimeout]? ?? 30,   // seconds
         QueryTimeout    = opts[CommandTimeout]? ?? 600,     // seconds
 
-        // tenant/pool only — the credential rides CredentialConnectionString, not this.
-        ConnectionString = BuildConnectionString(Host, Port, tenant, pool, UseEncryption, TrustServerCert),
+        // tenant/pool ride here; the credential rides CredentialConnectionString.
+        ConnectionString = BuildConnectionString(Host, Port, tenant, pool, UseEncryption, TrustServerCert, Superuser),
 
         Credential       = Extension.CurrentCredential(),
         CredProperties   = CredentialToOdbcProperties(Credential),
@@ -111,18 +121,22 @@ QoDImpl = (server as text, tenant as text, pool as text, trustServerCertificate 
 // Dremio ODBC property keys; booleans are the literals "1"/"0".
 //   ref: https://docs.dremio.com/cloud/sonar/client-apps/drivers/arrow-flight-sql-odbc/
 
-BuildConnectionString = (host as text, port as any, tenant as text, pool as text, useEncryption as logical, trustCert as logical) as record =>
+BuildConnectionString = (host as text, port as any, tenant as text, pool as text, useEncryption as logical, trustCert as logical, superuser as logical) as record =>
     [
         Driver = DriverName,
         host   = host,
         port   = Text.From(port),
         useEncryption                  = if useEncryption then "1" else "0",
         disableCertificateVerification = if trustCert then "1" else "0"
-    ] & EncodeScope(tenant, pool);
+    ]
+    & EncodeScope(tenant, pool)
+    // System-user request rides as an unknown key (gRPC header `x-qod-superuser`),
+    // sent only when true. Absence = false; the server is the sole authority.
+    & (if superuser then [ superuser = "true" ] else []);
 
 // tenant/pool as separate plain props: the driver auto-forwards unknown keys as
 // gRPC call headers (same routing contract as JDBC). NOT a packed RPCCallHeaders
-// value — its embedded ;/= corrupts the ODBC connection string.
+// value - its embedded ;/= corrupts the ODBC connection string.
 EncodeScope = (tenant as text, pool as text) as record =>
     [
         tenant = tenant,
@@ -138,7 +152,7 @@ CredentialToOdbcProperties = (cred as record) as record =>
             if kind = "UsernamePassword" then
                 // Strip trailing `=` padding: the driver splits connstring props on
                 // `=`. Server re-pads before BCrypt-decoding (spec R2). Standard
-                // alphabet (not URL-safe — cf. Base64UrlNoPadding for OAuth PKCE).
+                // alphabet (not URL-safe - cf. Base64UrlNoPadding for OAuth PKCE).
                 "Basic " & Text.TrimEnd(
                     Binary.ToText(
                         Text.ToBinary(cred[Username] & ":" & cred[Password], TextEncoding.Utf8),
@@ -203,16 +217,16 @@ SqlGetTypeInfoOverrides = (types as table) as table => types;
 OnOdbcError = (errorRecord as record) =>
     error errorRecord;
 
-// Data Source Kind — authentication & test connection -----------------------
+// Data Source Kind - authentication & test connection -----------------------
 
 QoD = [
     // Powers gateway/service refresh; must replay all required params, including
-    // trustServerCertificate, or the parameter check fails.
+    // trustServerCertificate and superuser, or the parameter check fails.
     TestConnection = (dataSourcePath) =>
         let
             json = Json.Document(dataSourcePath)
         in
-            { "QoD.Database", json[server], json[tenant], json[pool], json[trustServerCertificate] },
+            { "QoD.Database", json[server], json[tenant], json[pool], json[trustServerCertificate], json[superuser] },
 
     Authentication = [
         UsernamePassword = [
@@ -233,7 +247,7 @@ QoD = [
     Label = Extension.LoadString("DataSourceLabel")
 ];
 
-// OAuth 2.0 / OIDC — authorization-code + PKCE. Provider config in OAuthConfig
+// OAuth 2.0 / OIDC - authorization-code + PKCE. Provider config in OAuthConfig
 // so one .mez serves Keycloak / Entra ID / Google / Cognito.
 
 OAuthConfig = [
