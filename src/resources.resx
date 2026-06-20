@@ -60,6 +60,12 @@
   <data name="TrustCertFieldDescription" xml:space="preserve">
     <value>Skip TLS certificate validation. Use only for development or self-signed certificates.</value>
   </data>
+  <data name="SuperuserFieldCaption" xml:space="preserve">
+    <value>System user (all access)</value>
+  </data>
+  <data name="SuperuserFieldDescription" xml:space="preserve">
+    <value>Request system-user mode. The server grants full access only if your account is a configured system user; otherwise your normal permissions apply. Use only for administrative accounts.</value>
+  </data>
 
   <!-- Authentication labels -->
   <data name="AuthUsernamePasswordLabel" xml:space="preserve">
