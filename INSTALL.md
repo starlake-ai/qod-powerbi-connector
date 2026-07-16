@@ -87,7 +87,9 @@ Remove-Item $stage -Recurse -Force
 
 ## Option 2 - Install a pre-built unsigned `.mez` (dev/testing)
 
-1. Copy `QoD.mez` to the custom-connectors folder (create it if missing):
+A pre-built unsigned package is committed in this repo: [bin/Release/QoD.mez](bin/Release/QoD.mez).
+
+1. Copy [`QoD.mez`](bin/Release/QoD.mez) to the custom-connectors folder (create it if missing):
 
    ```
    %UserProfile%\Documents\Power BI Desktop\Custom Connectors\
