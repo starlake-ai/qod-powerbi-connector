@@ -1,8 +1,9 @@
 # Power Query SDK / connector build artifacts
-bin/
+src/bin/
 obj/
-*.mez
 *.pqx
+*.pfx
+*.cer
 
 # Power Query SDK credentials & test state (NEVER commit)
 *.mez.credentials
@@ -20,3 +21,4 @@ Thumbs.db
 # Logs / traces
 *.log
 Mashup*.log
+tools/odbc-probe/bin
