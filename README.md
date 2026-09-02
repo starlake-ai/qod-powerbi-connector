@@ -146,8 +146,8 @@ tenant/pool routing, RBAC-filtered navigation, column masking, row policies).
       in-box driver removes the driver install, not the gateway. Gateway-side
       ADBC support must be verified per gateway build. See
       docs/service-and-gateway.md.
-- [ ] DirectQuery validation pass in Desktop (checklist in
-      docs/service-and-gateway.md).
+- [x] DirectQuery validated in Desktop (2026-09-02): connect in DirectQuery
+      mode, per-interaction folded SQL, policies applied server-side.
 - [ ] Fill in real OIDC endpoints / `client_id` / scopes in `OAuthConfig`.
 - [ ] Provide a public test instance + per-auth credentials for certification.
 - [x] Connector icons sourced from the official Quack on Demand brand mark.

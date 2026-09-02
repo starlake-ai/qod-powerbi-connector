@@ -61,10 +61,14 @@ visual. Two QoD-side properties matter:
 - **Residency.** DirectQuery is the mode that keeps data server-side; Import
   copies the dataset to the client by design. See docs/limitations.md.
 
-Validation checklist (Power BI Desktop):
+Validated in Power BI Desktop 2.152.882.0 on 2026-09-02 against a `qod demo`
+instance: DirectQuery connect (the "Data Connectivity mode" radio on the
+connector's parameter dialog), per-interaction folded SQL, refresh, and
+server-side policies as a restricted principal. Checklist for re-validation:
 
-1. Get Data > Quack on Demand > choose **DirectQuery** on the navigator's
-   Import/DirectQuery prompt, pick `acme_tpch.tpch1.orders`.
+1. Get Data > Quack on Demand > select **DirectQuery** in the "Data
+   Connectivity mode" radio group on the connector's parameter dialog, then
+   pick `acme_tpch.tpch1.orders` in the navigator.
 2. Build a visual (for example count of orders by `o_orderpriority`), add a
    slicer or filter, and interact.
 3. Performance Analyzer (or Query Diagnostics) shows a folded SQL query per
