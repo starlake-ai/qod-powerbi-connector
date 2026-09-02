@@ -71,3 +71,30 @@ to succeed and to return the RBAC-filtered listing.
   Authorization: Bearer property), so the transport is covered by the Key
   verification; the interactive PKCE flow and edge-side OIDC provider config
   still need an IdP-equipped environment to exercise.
+
+## Phase 3 type reconciliation (live, 2026-09-02)
+
+QoD's `GetXdbcTypeInfo` (`TypeInfoCatalog.scala`) reports 19 primitive rows. Notable
+deltas against the vendored sample's map, all reconciled in QoD's favour:
+
+- The server reports `REAL` (SQL_REAL); `information_schema.columns` canonicalizes it
+  to `FLOAT` (likewise `CHAR` -> `VARCHAR`, `BINARY` -> `BLOB`), so both names are now
+  in TypeInfo.pqm and TypeFacets.
+- `TIMESTAMP_S` / `TIMESTAMP_MS` / `TIMESTAMP_NS` reach information_schema as distinct
+  strings and arrive as `timestamp[s|ms|ns]` Arrow columns; they were missing from the
+  sample's maps and degraded to `type any`. Now mapped to `DateTime.Type`.
+- Composite types (LIST, STRUCT, MAP) are intentionally absent from the server's
+  XdbcTypeInfo (not representable as SQL_TYPE_* codes); the connector types them from
+  the information_schema strings instead, unchanged from the sample.
+- A DuckLake tenant-db refuses `BIT`, `VARINT`, and fixed-size `INTEGER[N]` arrays
+  ("Failed to convert DuckDB type to DuckLake"), so the connector never encounters
+  them.
+
+`Tests/Types/type_baseline_test.py` pins the full 30-type (data_type, Arrow) matrix
+plus the three rejections against a live `qod demo` (34 assertions). The M-side
+`.pqout` baseline still needs PQTest from the Power Query SDK on a Windows host.
+
+Incidental edge observation: every DDL statement makes the ADBC driver log
+"FlightSQL endpoint returned inconsistent schema" (the edge advertises a `Count`
+int64 result schema but DDL answers `Success` bool). Cosmetic on the client, but it
+is a Flight SQL conformance wart in the QoD edge worth a main-repo issue.

@@ -50,3 +50,10 @@ external JWTs (`JWT_SECRET_KEY` / `JWT_PUBLIC_KEY_PATH`) and OIDC provider
 tokens. A PAT entered in the connector's Access token credential is rejected
 with UNAUTHENTICATED. Verified live 2026-09-02. Making the edge accept PATs
 would be a QoD-side change with its own review, not a connector change.
+
+## Types a DuckLake tenant-db cannot hold
+
+`BIT`, `VARINT`, and fixed-size arrays (`INTEGER[3]`) are refused by DuckLake at DDL
+time ("Failed to convert DuckDB type to DuckLake"), so they cannot occur in QoD
+tenant-db tables and the connector defines no mapping for them. `TIMESTAMP_NS`
+values lose sub-100ns precision in M (M datetimes tick at 100ns).

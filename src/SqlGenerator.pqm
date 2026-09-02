@@ -134,6 +134,14 @@ let
         #"DATE" = Type.ReplaceFacets(Date.Type, [NativeTypeName = "DATE"]),
         #"TIME" = Type.ReplaceFacets(Time.Type, [NativeTypeName = "TIME"]),
         #"TIMESTAMP" = Type.ReplaceFacets(DateTime.Type, [NativeTypeName = "TIMESTAMP"]),
+        // QoD reconciliation: DuckDB's second/milli/nano timestamp variants reach
+        // information_schema.columns as distinct data_type strings; without these
+        // rows they degrade to `type any`. REAL is DuckDB's alias for FLOAT and is
+        // the name QoD's GetXdbcTypeInfo reports.
+        #"TIMESTAMP_S" = Type.ReplaceFacets(DateTime.Type, [NativeTypeName = "TIMESTAMP_S"]),
+        #"TIMESTAMP_MS" = Type.ReplaceFacets(DateTime.Type, [NativeTypeName = "TIMESTAMP_MS"]),
+        #"TIMESTAMP_NS" = Type.ReplaceFacets(DateTime.Type, [NativeTypeName = "TIMESTAMP_NS"]),
+        #"REAL" = Type.ReplaceFacets(Single.Type, [NativeTypeName = "REAL"]),
         #"TIMESTAMP WITH TIME ZONE" = Type.ReplaceFacets(DateTimeZone.Type, [NativeTypeName = "TIMESTAMP WITH TIME ZONE"]),
         #"BLOB" = Type.ReplaceFacets(Binary.Type, [NativeTypeName = "BLOB"]),
         #"UUID" = Type.ReplaceFacets(Text.Type, [NativeTypeName = "UUID"]),

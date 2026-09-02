@@ -134,7 +134,8 @@ tenant/pool routing, RBAC-filtered navigation, column masking, row policies).
       masked/filtered data as a restricted principal.
 - [x] RBAC navigation acceptance test (two-user diff), repeatable against
       `qod demo`.
-- [ ] Type map reconciliation against QoD's `GetXdbcTypeInfo` (plan Phase 3).
+- [x] Type map reconciled against QoD's `GetXdbcTypeInfo` and live DuckLake type
+      surface (plan Phase 3; wire baseline in `Tests/Types/`, `.pqout` pending SDK).
 - [ ] Folding diagnostics baselines via the SDK test framework (plan Phase 4).
 - [ ] DirectQuery validation pass + Service/gateway story (plan Phase 6;
       docs/resolved-questions.md Q1).
