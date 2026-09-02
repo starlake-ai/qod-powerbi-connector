@@ -47,6 +47,25 @@ jobs:
           nuget install Microsoft.PowerQuery.SdkTools -OutputDirectory pqsdk -ExcludeVersion
           $mk = Get-ChildItem -Path pqsdk -Recurse -Filter MakePQX.exe | Select-Object -First 1 -ExpandProperty FullName
           if (-not $mk) { throw "MakePQX.exe not found in the SDK tools package." }
+          # SdkTools 2.155.x ships System.Threading.Tasks.Extensions 4.2.1.0 with no
+          # binding redirect for it, so MakePQX crashes (FileLoadException) while
+          # serializing its result JSON - AFTER the pack/verify work, corrupting the
+          # exit code. Add the missing redirect when absent (no-op once fixed upstream).
+          $cfg = "$mk.config"
+          $xml = Get-Content $cfg -Raw
+          if ($xml -notmatch 'System\.Threading\.Tasks\.Extensions') {
+            $redirect = @"
+    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
+      <dependentAssembly>
+        <assemblyIdentity name="System.Threading.Tasks.Extensions" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" />
+        <bindingRedirect oldVersion="0.0.0.0-4.2.1.0" newVersion="4.2.1.0" />
+      </dependentAssembly>
+    </assemblyBinding>
+  </runtime>
+"@
+            $xml.Replace("  </runtime>", $redirect) | Set-Content $cfg -NoNewline
+            Write-Host "Patched missing binding redirect into $cfg"
+          }
           "MAKEPQX=$mk" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Decode signing certificate
