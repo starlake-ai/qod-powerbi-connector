@@ -1,0 +1,34 @@
+// QoDAdbcConfig.pqm - ADBC driver configuration for QoD via FlightSQL.
+// Adapted from the DuckDbFlightSQL sample's FlightSqlAdbcConfig.pqm (MIT, see NOTICE).
+// Uses the FlightSQL ADBC driver that ships in-box with Power BI Desktop and
+// the Power Query SDK; no separate driver install is needed.
+let
+    TypeInfo = Extension.LoadExpression("TypeInfo.pqm"),
+    QoDAdbcConfig = [
+        Name = "FlightSqlAdbcQod",
+        Folder = "FlightSQL",
+        File = "libadbc_driver_flightsql.dll",
+        DriverType = "Unmanaged",
+        EntryPoint = "FlightSqlDriverInit",
+        IdentifierQuoteChar = """",
+        CatalogNameSeparator = ".",
+        TableTypes = "BASE TABLE, VIEW",
+        SupportsCatalog = true,
+        SupportsSchema = true,
+        SupportedConnectionOptions = [
+            adbc.connection.catalog = false,
+            adbc.connection.db_schema = false
+        ],
+        TypeInfo = Table.SelectColumns(
+            TypeInfo,
+            {"Name", "SqlType", "Unsigned", "ColumnSize", "NumberPrecisionRadix", "LiteralPrefix", "LiteralSuffix"}
+        )
+    ],
+    Extension.LoadExpression = (name as text) =>
+        let
+            binary = Extension.Contents(name),
+            asText = Text.FromBinary(binary)
+        in
+            Expression.Evaluate(asText, #shared)
+in
+    QoDAdbcConfig

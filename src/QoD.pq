@@ -1,21 +1,21 @@
 // QoD - Quack on Demand Power BI Custom Connector
 // Connects Power BI / Fabric to a Quack on Demand gateway over Apache Arrow
-// Flight SQL via the Arrow Flight SQL ODBC driver. ADBC (the "Dremio path") is
-// the later certification-time transport - see docs/architecture.md.
-[Version = "1.0.0"]
+// Flight SQL via Adbc.Connection and the FlightSQL ADBC driver that ships
+// in-box with Power BI Desktop and the Power Query SDK (no driver install).
+//
+// The ADBC core is adapted from Microsoft's MIT-licensed DuckDbFlightSQL
+// sample (see NOTICE); QoD serves DuckDB over Flight SQL, so the sample's
+// SQL generator and type map carry over unchanged. The previous
+// Odbc.DataSource transport (blocked on Flight SQL ODBC driver maturity)
+// lives in this repo's history on main; see docs/architecture.md.
+//
+// Credentials (Username/Password, PAT/JWT, OAuth) are handled via
+// Extension.CurrentCredential() only - never as function parameters, because
+// dialog parameter values are persisted into the user's query.
+[Version = "2.0.0"]
 section QoD;
 
-// Configuration -------------------------------------------------------------
-
-// ODBC driver name as registered on the machine/gateway (Dremio build shown;
-// confirm for the build Quack ships).
-DriverName = "Arrow Flight SQL ODBC Driver";
-
 DefaultPort = 31338;
-
-// Custom header carrying the credential on every call. The server accepts this
-// and standard `Authorization`; an unknown name avoids the driver reserving it.
-AuthHeaderName = "x-qod-authorization";
 
 // Data source function ------------------------------------------------------
 
@@ -70,152 +70,350 @@ QoDType = type function (
     Documentation.Name = Extension.LoadString("DataSourceName")
 ];
 
+QoDSqlGenerator = Extension.LoadExpression("SqlGenerator.pqm");
+QoDAdbcConfig = Extension.LoadExpression("QoDAdbcConfig.pqm");
+
+Adbc.Connection = try #shared[Adbc.Connection] otherwise (driver, databaseProperties, connectionProperties, options) =>
+    error Error.Record("Expression.Error", "The Adbc.Connection function is not available in this environment");
+Tables.NavigationPropertyGenerator = try #shared[Tables.NavigationPropertyGenerator] otherwise null;
+
+ModuleIdentifier = () => ...;
+MakeUniqueIdentifier = (connectionString as record) as record => [Module = ModuleIdentifier, Signature = connectionString];
+
 QoDImpl = (server as text, tenant as text, pool as text, trustServerCertificate as logical, superuser as logical, optional options as record) as table =>
     let
-        Address     = Uri.Parts("flight://" & server),
-        Host        = Address[Host],
-        Port        = if Address[Port] = null or Address[Port] = "" or Address[Port] = 0
-                      then DefaultPort
-                      else Address[Port],
+        Address = ParseServerAddress(server),
+        opts = options ?? [],
+        UseEncryption = opts[UseEncryption]? ?? true,
+        UriSchema = if UseEncryption then "grpc+tls" else "grpc",
+        Uri = UriSchema & "://" & Address[Host] & ":" & Text.From(Address[Port]),
 
-        opts            = options ?? [],
-        UseEncryption   = opts[UseEncryption]? ?? true,
-        TrustServerCert = trustServerCertificate,
-        Superuser       = superuser,
-        ConnectTimeout  = opts[ConnectionTimeout]? ?? 30,   // seconds
-        QueryTimeout    = opts[CommandTimeout]? ?? 600,     // seconds
+        // Build the connection string from user-friendly parameters. All
+        // ADBC-level properties are mapped here; the user never sees them.
+        // The QoD edge authenticates every RPC from the `tenant` and `pool`
+        // gRPC call headers plus the credential, so both ride on every
+        // request. The system-user request rides as the `superuser` header,
+        // sent only when true; the server is the sole authority.
+        SessionHeaders = RecordToHeaders(
+            [tenant = tenant, pool = pool]
+            & (if superuser then [superuser = "true"] else [])
+        ),
+        TlsProperties = if UseEncryption and trustServerCertificate then
+            [#"adbc.flight.sql.client_option.tls_skip_verify" = "true"]
+        else [],
+        CredentialProperties = GetCredentialConnectionProperties(),
 
-        // tenant/pool ride here; the credential rides CredentialConnectionString.
-        ConnectionString = BuildConnectionString(Host, Port, tenant, pool, UseEncryption, TrustServerCert, Superuser),
+        ConnectionString = [uri = Uri] & SessionHeaders & TlsProperties & CredentialProperties,
 
-        Credential       = Extension.CurrentCredential(),
-        CredProperties   = CredentialToOdbcProperties(Credential),
-
-        OdbcOptions = [
-            HierarchicalNavigation = true,
-            HideNativeQuery        = false,
-            ConnectionTimeout      = #duration(0, 0, 0, ConnectTimeout),
-            CommandTimeout         = #duration(0, 0, 0, QueryTimeout),
-
-            SqlCapabilities = SqlCaps,
-            SQLGetInfo      = SqlGetInfoOverrides,
-            SQLGetFunctions = SqlGetFunctionsOverrides,
-            SQLGetTypeInfo  = SqlGetTypeInfoOverrides,
-
-            ClientConnectionPooling = true,
-            OnError = OnOdbcError,
-            SoftNumbers = true,
-            TolerateConcatOverflow = true,
-
-            // MUST use CredentialConnectionString: it stops Power BI auto-injecting
-            // UID/PWD, which would trigger a Flight Handshake before tenant/pool are
-            // attached and fail login. See docs/architecture.md + spec R4a / §11.
-            CredentialConnectionString = CredProperties
+        Connection = Adbc.Connection(QoDAdbcConfig, ConnectionString, [], [ConnectionPoolType = 2]),
+        ExecuteQueryCtor = (cxn as record) => (sql as text, optional queryOpts as record) =>
+            let execOptions = [IsMetadata = queryOpts[IsMetadata]?]
+            in cxn[ExecuteQuery](sql, null, execOptions),
+        GetData = (query as text, resultType as type, ctx as record) =>
+            CreateDataTable(query, resultType, ctx, context[ExecuteQuery]),
+        UniqueIdentifier = MakeUniqueIdentifier(ConnectionString),
+        SqlGen = SqlView.Generator(UniqueIdentifier, QoDSqlGenerator[SqlGenerator], GetData),
+        NavPropGenerator = if Tables.NavigationPropertyGenerator = null then null else
+            Tables.NavigationPropertyGenerator(null, (path) =>
+                AdbcDatabases{[Name = path{0}]}[Data]{[Name = path{1}]}[Data]{[Name = path{2}]}[Data]),
+        context = [
+            Connection = Connection, ExecuteQuery = ExecuteQueryCtor(Connection),
+            ExecuteQueryCtor = ExecuteQueryCtor, SqlGenerator = SqlGen, NavPropGenerator = NavPropGenerator
         ],
+        AdbcDatabases = GetDatabases(context, null)
+    in AdbcDatabases;
 
-        Source = Odbc.DataSource(ConnectionString, OdbcOptions)
-    in
-        Source;
-
-// Connection string builder -------------------------------------------------
-// Dremio ODBC property keys; booleans are the literals "1"/"0".
-//   ref: https://docs.dremio.com/cloud/sonar/client-apps/drivers/arrow-flight-sql-odbc/
-
-BuildConnectionString = (host as text, port as any, tenant as text, pool as text, useEncryption as logical, trustCert as logical, superuser as logical) as record =>
-    [
-        Driver = DriverName,
-        host   = host,
-        port   = Text.From(port),
-        useEncryption                  = if useEncryption then "1" else "0",
-        disableCertificateVerification = if trustCert then "1" else "0"
-    ]
-    & EncodeScope(tenant, pool)
-    // System-user request rides as an unknown key (gRPC header `x-qod-superuser`),
-    // sent only when true. Absence = false; the server is the sole authority.
-    & (if superuser then [ superuser = "true" ] else []);
-
-// tenant/pool as separate plain props: the driver auto-forwards unknown keys as
-// gRPC call headers (same routing contract as JDBC). NOT a packed RPCCallHeaders
-// value - its embedded ;/= corrupts the ODBC connection string.
-EncodeScope = (tenant as text, pool as text) as record =>
-    [
-        tenant = tenant,
-        pool   = pool
-    ];
-
-// Maps the selected PBI credential to one auth header (no native UID/PWD/token):
-//   UsernamePassword -> Basic base64(user:pass) ; Key/OAuth -> Bearer <token>
-CredentialToOdbcProperties = (cred as record) as record =>
+// ============================================================================
+// CREDENTIAL HANDLING
+// Maps the selected Power BI credential to ADBC connection properties:
+//   UsernamePassword -> driver username/password (Flight Basic handshake)
+//   Key (PAT / JWT)  -> Authorization: Bearer <key>
+//   OAuth            -> Authorization: Bearer <access_token>
+// ============================================================================
+GetCredentialConnectionProperties = () =>
     let
-        kind = cred[AuthenticationKind],
-        authValue =
-            if kind = "UsernamePassword" then
-                // Strip trailing `=` padding: the driver splits connstring props on
-                // `=`. Server re-pads before BCrypt-decoding (spec R2). Standard
-                // alphabet (not URL-safe - cf. Base64UrlNoPadding for OAuth PKCE).
-                "Basic " & Text.TrimEnd(
-                    Binary.ToText(
-                        Text.ToBinary(cred[Username] & ":" & cred[Password], TextEncoding.Utf8),
-                        BinaryEncoding.Base64),
-                    "=")
-            else if kind = "Key" then
-                "Bearer " & cred[Key]
-            else if kind = "OAuth" then
-                "Bearer " & cred[access_token]
-            else
-                error Error.Record(
-                    "QoD.UnsupportedAuth",
-                    "Unsupported authentication kind: " & kind
-                )
+        Credential = Extension.CurrentCredential(),
+        kind = Credential[AuthenticationKind]?
     in
-        Record.AddField([], AuthHeaderName, authValue);
+        if kind = "UsernamePassword" then
+            [username = Credential[Username], password = Credential[Password]]
+        else if kind = "Key" then
+            [#"adbc.flight.sql.authorization_header" = "Bearer " & Credential[Key]]
+        else if kind = "OAuth" then
+            [#"adbc.flight.sql.authorization_header" = "Bearer " & Credential[access_token]]
+        else
+            error Error.Record("QoD.UnsupportedAuth", "Unsupported authentication kind: " & (kind ?? "null"));
 
-// ODBC capability shaping (DirectQuery folding) -----------------------------
+// ============================================================================
+// HEADER HELPERS
+// Converts a record of user-friendly key/value pairs into ADBC Flight RPC
+// call headers. [tenant = "acme", pool = "bi"] maps to
+// "adbc.flight.sql.rpc.call_header.tenant" = "acme" etc., which the driver
+// sends as the gRPC headers `tenant` / `pool` that the QoD edge authenticates
+// (the same routing contract as JDBC and ODBC).
+// ============================================================================
+RecordToHeaders = (input as record) as record =>
+    let
+        NonNullFields = List.Select(Record.FieldNames(input), each Record.Field(input, _) <> null)
+    in
+        Record.FromList(
+            List.Transform(NonNullFields, each Record.Field(input, _)),
+            List.Transform(NonNullFields, each "adbc.flight.sql.rpc.call_header." & _)
+        );
 
-// Supports*Literals MUST stay true: Quack has no parameter binding, so the M
-// engine must inline literals instead of emitting `?` params (spec R9).
-SqlCaps = [
-    SupportsTop                   = false,
-    LimitClauseKind               = LimitClauseKind.LimitOffset,
-    Sql92Conformance              = 8 /* SQL_SC_SQL92_FULL */,
-    SupportsNumericLiterals       = true,
-    SupportsStringLiterals        = true,
-    SupportsOdbcDateLiterals      = true,
-    SupportsOdbcTimeLiterals      = true,
-    SupportsOdbcTimestampLiterals = true,
-    GroupByCapabilities           = 4 /* SQL_GB_GROUP_BY_CONTAINS_SELECT */,
-    FractionalSecondsScale        = 6
-];
+// ============================================================================
+// SERVER ADDRESS PARSING
+// Accepts a plain hostname or hostname:port. The user does NOT specify the
+// gRPC scheme (grpc:// or grpc+tls://); that is determined by UseEncryption.
+// Default port is 31338, QoD's Flight SQL edge default.
+// ============================================================================
+ParseServerAddress = (server as text) as record =>
+    let
+        trimmed = Text.Trim(server),
+        // Strip any scheme prefix if the user accidentally included one
+        withoutScheme =
+            if Text.StartsWith(trimmed, "grpc+tls://") then Text.AfterDelimiter(trimmed, "grpc+tls://")
+            else if Text.StartsWith(trimmed, "grpc+tcp://") then Text.AfterDelimiter(trimmed, "grpc+tcp://")
+            else if Text.StartsWith(trimmed, "grpc://") then Text.AfterDelimiter(trimmed, "grpc://")
+            else trimmed,
+        hostParts = Text.Split(withoutScheme, ":"),
+        host = hostParts{0},
+        port = if List.Count(hostParts) = 2 then Number.FromText(hostParts{1}) else DefaultPort
+    in
+        [Host = host, Port = port];
 
-SqlGetInfoOverrides = [
-    // SQL_DBMS_NAME (info 17) can't be set here (PBI allows only capability flags);
-    // the Dremio build erroring on it is a driver gap.
-    SQL_SQL92_PREDICATES    = 0x0000FFFF,
-    SQL_AGGREGATE_FUNCTIONS = 0x0000007F,
-    SQL_SQL_CONFORMANCE     = 4 /* SQL_SC_SQL92_FULL */,
-    SQL_GROUP_BY            = 2 /* SQL_GB_GROUP_BY_CONTAINS_SELECT */,
+// ============================================================================
+// DATA TABLE CREATION (with Table.View for query folding)
+// ============================================================================
+CreateDataTable = (query as text, resultType as type, context as record, executeQuery as function) =>
+    Table.View(null, [
+        GetType = () => resultType,
+        GetRows = () =>
+            let
+                data = executeQuery(query, context),
+                oldNames = Table.ColumnNames(data),
+                newNames = Table.ColumnNames(#table(resultType, {})),
+                pairs = List.Zip({oldNames, newNames}),
+                renamed = try Table.RenameColumns(data, pairs, MissingField.Ignore) otherwise data,
+                projected = Table.SelectColumns(renamed, newNames, MissingField.Ignore)
+            in projected,
+        ThrowFoldingFailures = false
+    ]);
 
-    // Force catalog navigation: the Dremio build pre-seeds SQL_CATALOG_NAME="N"
-    // before reading the server, so we override it at the M layer or PBI shows no
-    // catalogs (empty tree).
-    SQL_CATALOG_NAME           = "Y",
-    SQL_CATALOG_TERM           = "database",
-    SQL_CATALOG_NAME_SEPARATOR = ".",
-    SQL_CATALOG_LOCATION       = 1           /* SQL_CL_START */
-];
+// ============================================================================
+// NAVIGATION: Database > Schemas > Tables
+// ============================================================================
+MakeNavTableType = (isLeaf as logical) as type =>
+    let
+        dataType = type table meta [
+            NavigationTable.ItemKind = "Table", Preview.Delay = "Table",
+            NavigationTable.RowConfigurationColumn = "Kind"
+        ],
+        tableType = type table [Name = text, Description = nullable text, Data = dataType, Kind = text],
+        withKeys = Type.ReplaceTableKeys(tableType, {[Columns = {"Name", "Kind"}, Primary = true]}) meta [
+            NavigationTable.NameColumn = "Name", NavigationTable.DataColumn = "Data", NavigationTable.KindColumn = "Kind"
+        ]
+    in withKeys;
 
-// Scalar/aggregate functions DuckDB can fold (conservative; widen after validation).
-SqlGetFunctionsOverrides = [
-    SQL_CONVERT_FUNCTIONS  = 0x00000002 /* SQL_FN_CVT_CAST */,
-    SQL_STRING_FUNCTIONS   = 0x0017FFFF,
-    SQL_NUMERIC_FUNCTIONS  = 0x00FFFFFF,
-    SQL_TIMEDATE_FUNCTIONS = 0x0003FFFF
-];
+GetDatabases = (context as record, optional filterDatabase as text) =>
+    let
+        isLeaf = false, kind = "Database",
+        // Not SHOW DATABASES: the QoD edge admits it unfiltered (catalog-name leak)
+        // and its Prepare-time LIMIT 0 probe cannot wrap it, so it errors anyway.
+        // The session's tenant and pool already determine the catalog, so the top
+        // level collapses to the single session catalog.
+        command = "SELECT current_database() AS Name",
+        tables = context[ExecuteQuery](command, [IsMetadata = true]),
+        filtered = if filterDatabase <> null then Table.SelectRows(tables, each [Name] = filterDatabase) else tables,
+        getSchemas = (name) => GetSchemas(context, name),
+        withDescription = Table.AddColumn(filtered, "Description", each null, type nullable text),
+        withData = Table.AddColumn(withDescription, "Data", each getSchemas([Name]), type table),
+        withKind = Table.AddColumn(withData, "Kind", each kind meta [NavigationTable.IsLeaf = isLeaf], type text),
+        withFolding = Table.View(null, [
+            GetType = () => MakeNavTableType(isLeaf), GetRows = () => withKind,
+            OnSelectRows = (selector) => FoldNavigationStep(withKind, selector, getSchemas, kind),
+            ThrowFoldingFailures = false
+        ])
+    in withFolding;
 
-SqlGetTypeInfoOverrides = (types as table) as table => types;
+GetSchemas = (context as record, catalog as text) =>
+    let
+        isLeaf = false, kind = "Schema",
+        command = "SELECT schema_name AS Name FROM information_schema.schemata WHERE catalog_name = "
+            & EscapeString(catalog) & " AND schema_name <> 'information_schema'",
+        schemas = context[ExecuteQuery](command, [IsMetadata = true]),
+        getTables = (name) => GetTables(context, catalog, name),
+        withDescription = Table.AddColumn(schemas, "Description", each null, type nullable text),
+        withData = Table.AddColumn(withDescription, "Data", each getTables([Name]), type table),
+        withKind = Table.AddColumn(withData, "Kind", each kind meta [NavigationTable.IsLeaf = isLeaf], type text),
+        withFolding = Table.View(null, [
+            GetType = () => MakeNavTableType(isLeaf), GetRows = () => withKind,
+            OnSelectRows = (selector) => FoldNavigationStep(withKind, selector, getTables, kind),
+            OnNativeQuery = (cmd, params, nqOpts) => try NativeQuery(context, catalog, cmd) catch (e) => error Table.ViewError(e),
+            ThrowFoldingFailures = false
+        ])
+    in withFolding;
 
-OnOdbcError = (errorRecord as record) =>
-    error errorRecord;
+GetTables = (context as record, catalog as text, schema as text) =>
+    let
+        isLeaf = true, kind = {"Table", "View"},
+        command = Text.Combine({
+            "SELECT table_name AS Name, table_type FROM information_schema.tables WHERE table_catalog = ",
+            EscapeString(catalog), " AND table_schema = ", EscapeString(schema)
+        }),
+        tables = context[ExecuteQuery](command, [IsMetadata = true]),
+        getTable = (name) => GetTable(context, catalog, schema, name),
+        withDescription = Table.AddColumn(tables, "Description", each null, type nullable text),
+        withData = Table.AddColumn(withDescription, "Data", each getTable([Name]), type table),
+        withKind = Table.AddColumn(withData, "Kind",
+            each (if [table_type] = "VIEW" then "View" else "Table") meta [NavigationTable.IsLeaf = isLeaf], type text),
+        removeType = Table.RemoveColumns(withKind, {"table_type"}),
+        withFolding = Table.View(null, [
+            GetType = () => MakeNavTableType(isLeaf), GetRows = () => removeType,
+            OnSelectRows = (selector) => FoldNavigationStep(removeType, selector, getTable, "Table"),
+            ThrowFoldingFailures = false
+        ])
+    in withFolding;
+
+GetTable = (context as record, catalog as text, schema as text, table as text) =>
+    let
+        tableType = GetTableType(context, catalog, schema, table),
+        tableReference = [Kind = "FromTable", Table = [Schema = schema, Name = table]],
+        withSqlView = context[SqlGenerator](tableReference, tableType, []),
+        // Transform nested columns (STRUCT, ARRAY) from text to native M types.
+        // DuckDB's ADBC driver delivers these as native Arrow list/struct, so values
+        // are already M list/record; we just re-type the columns to `type any`.
+        rowFields = Type.RecordFields(Type.TableRow(tableType)),
+        columnNames = Record.FieldNames(rowFields),
+        nestedColumns = List.Select(columnNames, (col) =>
+            let
+                colType = Record.Field(rowFields, col)[Type],
+                nativeName = Record.FieldOrDefault(Type.Facets(colType), "NativeTypeName", null)
+            in
+                nativeName = "STRUCT" or nativeName = "ARRAY"
+        ),
+        withNestedTypes = if List.Count(nestedColumns) > 0
+            then Table.TransformColumnTypes(withSqlView, List.Transform(nestedColumns, each {_, type any}))
+            else withSqlView
+    in withNestedTypes;
+
+GetTableType = (context as record, catalog as text, schema as text, table as text) =>
+    let
+        command = Text.Combine({
+            "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_catalog = ",
+            EscapeString(catalog), " AND table_schema = ", EscapeString(schema),
+            " AND table_name = ", EscapeString(table), " ORDER BY ordinal_position"
+        }),
+        columns = Table.Buffer(context[ExecuteQuery](command, [IsMetadata = true])),
+        withType = Table.AddColumn(columns, "Type",
+            each [Type = GetColumnType([data_type], [is_nullable]), Optional = false]),
+        rowType = Type.ForRecord(Record.FromList(withType[Type], withType[column_name]), false),
+        tableType = type table rowType,
+        withPrimaryKeys = ApplyPrimaryKeys(context, catalog, schema, table, tableType)
+    in withPrimaryKeys;
+
+GetColumnType = (typeName as text, isNullable as text) =>
+    let
+        baseType = if Text.EndsWith(typeName, "[]") then "ARRAY"
+            else if Text.Contains(typeName, "(") then Text.BeforeDelimiter(typeName, "(")
+            else typeName,
+        normalized = Text.Upper(Text.Trim(baseType)),
+        matchedType = Record.FieldOrDefault(QoDSqlGenerator[TypeFacets], normalized, null),
+        mtype = if matchedType <> null then matchedType else type any
+    in if isNullable = "YES" then type nullable mtype else mtype;
+
+// ============================================================================
+// PRIMARY & FOREIGN KEY RELATIONSHIPS
+// A no-op against QoD DuckLake tenant-dbs, for two independent reasons: the
+// constraint relations are RBAC-denied without a covering grant, and DuckLake
+// records no PK/FK constraints anyway. The `try` degrades to "no keys".
+// See docs/limitations.md.
+// ============================================================================
+ApplyPrimaryKeys = (context as record, catalog as text, schema as text, table as text, tableType as type) as type =>
+    let
+        pkCommand = Text.Combine({
+            "SELECT kcu.column_name ",
+            "FROM information_schema.table_constraints tc ",
+            "JOIN information_schema.key_column_usage kcu ",
+            "  ON tc.constraint_name = kcu.constraint_name ",
+            "  AND tc.table_catalog = kcu.table_catalog ",
+            "  AND tc.table_schema = kcu.table_schema ",
+            "  AND tc.table_name = kcu.table_name ",
+            "WHERE tc.constraint_type = 'PRIMARY KEY' ",
+            "  AND tc.table_catalog = ", EscapeString(catalog),
+            "  AND tc.table_schema = ", EscapeString(schema),
+            "  AND tc.table_name = ", EscapeString(table),
+            " ORDER BY kcu.ordinal_position"
+        }),
+        pkResult = try context[ExecuteQuery](pkCommand, [IsMetadata = true]) otherwise #table({"column_name"}, {}),
+        pkColumns = pkResult[column_name],
+        hasPK = List.Count(pkColumns) > 0,
+        withPK = if hasPK then Type.ReplaceTableKeys(tableType, {[Columns = pkColumns, Primary = true]}) else tableType
+    in withPK;
+
+GetForeignKeys = (context as record, catalog as text, schema as text, table as text) as table =>
+    let
+        fkCommand = Text.Combine({
+            "SELECT kcu.column_name AS from_column, ccu.table_schema AS to_schema, ",
+            "  ccu.table_name AS to_table, ccu.column_name AS to_column ",
+            "FROM information_schema.table_constraints tc ",
+            "JOIN information_schema.key_column_usage kcu ",
+            "  ON tc.constraint_name = kcu.constraint_name AND tc.table_catalog = kcu.table_catalog ",
+            "  AND tc.table_schema = kcu.table_schema AND tc.table_name = kcu.table_name ",
+            "JOIN information_schema.constraint_column_usage ccu ",
+            "  ON tc.constraint_name = ccu.constraint_name AND tc.table_catalog = ccu.table_catalog ",
+            "WHERE tc.constraint_type = 'FOREIGN KEY' ",
+            "  AND tc.table_catalog = ", EscapeString(catalog),
+            "  AND tc.table_schema = ", EscapeString(schema),
+            "  AND tc.table_name = ", EscapeString(table)
+        }),
+        fkResult = try context[ExecuteQuery](fkCommand, [IsMetadata = true])
+            otherwise #table({"from_column", "to_schema", "to_table", "to_column"}, {})
+    in fkResult;
+
+// ============================================================================
+// NATIVE QUERY SUPPORT
+// ============================================================================
+NativeQuery = (context as record, catalog as text, cmd as text) =>
+    let
+        typeQuery = "SELECT * FROM (" & cmd & ") AS ""_"" WHERE 0 = 1",
+        typeResult = context[ExecuteQuery](typeQuery, []),
+        tableType = Value.Type(Table.Buffer(typeResult)),
+        reference = [Kind = "FromQuery", Query = [Kind = "Verbatim", Query = cmd], Alias = "_"],
+        result = context[SqlGenerator](reference, tableType, [])
+    in result;
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+EscapeIdentifier = (identifier as text) as text => """" & Text.Replace(identifier, """", """""") & """";
+EscapeString = (string as text) as text => "'" & Text.Replace(string, "'", "''") & "'";
+
+FoldNavigationStep = (base as table, selector as function, loader as function, kind as any) =>
+    let
+        reduceAnd = (ast) => if ast[Kind] = "Binary" and ast[Operator] = "And" then List.Combine({@reduceAnd(ast[Left]), @reduceAnd(ast[Right])}) else {ast},
+        matchFieldAccess = (ast) => if ast[Kind] = "FieldAccess" and ast[Expression] = RowExpression.Row then ast[MemberName] else ...,
+        matchConstant = (ast) => if ast[Kind] = "Constant" then ast[Value] else ...,
+        matchIndex = (ast) => if ast[Kind] = "Binary" and ast[Operator] = "Equals" then
+            if ast[Left][Kind] = "FieldAccess" then Record.AddField([], matchFieldAccess(ast[Left]), matchConstant(ast[Right]))
+            else Record.AddField([], matchFieldAccess(ast[Right]), matchConstant(ast[Left]))
+        else ...,
+        predicate1 = Record.Combine(List.Transform(reduceAnd(RowExpression.From(selector)), matchIndex)),
+        isKindList = kind is list,
+        kindMatch = if isKindList then List.Contains(kind, predicate1[Kind]?) else predicate1[Kind]? = kind,
+        predicate2 = if kindMatch then Record.RemoveFields(predicate1, {"Kind"}) else predicate1,
+        name = if Record.FieldCount(predicate2) = 1 and predicate2[Name]? <> null then predicate2[Name] else ...,
+        success = not (try name)[HasError]
+    in
+        if success then Table.FromRecords({[Name = name, Description = "", Data = loader(name), Kind = kind]})
+        else Table.SelectRows(base, selector);
+
+// ============================================================================
+// EXTENSION LOADERS
+// ============================================================================
+Extension.LoadExpression = (name as text) =>
+    let binary = Extension.Contents(name), asText = Text.FromBinary(binary)
+    in Expression.Evaluate(asText, #shared);
 
 // Data Source Kind - authentication & test connection -----------------------
 
@@ -382,7 +580,8 @@ QoD.Publish = [
     LearnMoreUrl        = "https://github.com/starlake-ai/quack-on-demand",
     SourceImage         = QoD.Icons,
     SourceTypeImage     = QoD.Icons,
-    SupportsDirectQuery = true
+    SupportsDirectQuery = true,
+    NativeQueryProperties = [navigationSteps = {[]}, nativeQueryOptions = [EnableFolding = true]]
 ];
 
 QoD.Icons = [

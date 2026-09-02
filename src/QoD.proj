@@ -21,6 +21,11 @@
   <ItemGroup>
     <!-- Connector source -->
     <Compile Include="QoD.pq" />
+    <!-- ADBC driver config, folding machinery, and type map (see NOTICE) -->
+    <Content Include="QoDAdbcConfig.pqm" />
+    <Content Include="TypeInfo.pqm" />
+    <Content Include="SqlGenerator.pqm" />
+    <Content Include="SqlGeneratorCommon.pqm" />
     <!-- Localized strings -->
     <EmbeddedResource Include="resources.resx" />
     <!-- Icons (all sizes required for certification) -->

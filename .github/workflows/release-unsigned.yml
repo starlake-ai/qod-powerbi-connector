@@ -37,9 +37,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist stage
-          cp src/QoD.pq src/resources.resx stage/
+          cp src/QoD.pq src/*.pqm src/resources.resx stage/
           cp src/icons/QoD*.png stage/
-          ( cd stage && zip -X ../dist/QoD.mez QoD.pq resources.resx QoD*.png )
+          ( cd stage && zip -X ../dist/QoD.mez QoD.pq *.pqm resources.resx QoD*.png )
           echo "--- QoD.mez contents ---"
           unzip -l dist/QoD.mez
 

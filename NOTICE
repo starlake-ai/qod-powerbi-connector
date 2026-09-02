@@ -1,0 +1,35 @@
+qod-powerbi-connector
+Copyright (c) Starlake.ai
+
+This repository vendors and adapts the DuckDbFlightSQL sample connector from
+Microsoft's DataConnectors repository:
+
+  https://github.com/microsoft/DataConnectors (samples/DuckDbFlightSQL)
+  vendored at commit c7b9d81d0d1a62b5f5486f63087c8587e2ca0160 on 2026-09-02
+
+The vendored and adapted files (src/Qod.pq, src/QodAdbcConfig.pqm,
+src/TypeInfo.pqm, src/SqlGenerator.pqm, src/SqlGeneratorCommon.pqm,
+src/Qod.proj, src/resources.resx, and the Tests/ tree) are derived from that
+sample, which is licensed as follows:
+
+    MIT License
+
+    Copyright (c) Microsoft Corporation.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
