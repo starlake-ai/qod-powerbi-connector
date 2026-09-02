@@ -126,3 +126,17 @@ Two QoD-side findings came out of the screen-survival check:
    `Tests/TestSuites/QodFolding/FoldRlsCls.query.pqout` pins the CORRECT
    single-row (BUILDING, ***) expectation, so the suite fails against an
    unfixed edge by design.
+
+## Q1 resolved (2026-09-02): the Service still needs a gateway; gateway ADBC is the open edge
+
+Documented in docs/service-and-gateway.md. The in-box ADBC driver does NOT
+remove the gateway requirement for Power BI Service refresh: custom connectors
+never execute in the Service, so refresh routes through an on-premises data
+gateway hosting the .mez with "allow custom connectors" enabled - the
+driver-install step is what disappears, not the connector-hosting step. Whether
+a current gateway build exposes Adbc.Connection to custom connectors (and
+bundles the FlightSQL driver) is stated nowhere and must be verified against a
+real gateway install; Microsoft's transition doc has gateway-routed first-party
+queries on ODBC today, with ODBC leaving gateway installations by Spring 2027.
+The deliverable is therefore Desktop-ready today and Service-capable only
+through a sufficiently recent gateway, verified per install.

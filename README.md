@@ -64,6 +64,7 @@ Tests/
   ...                   SDK test framework assets (settings, baselines)
 docs/
   connecting.md         installation and connection guide (ADBC path)
+  service-and-gateway.md Service refresh, gateway requirement, DirectQuery
   limitations.md        known limitations
   resolved-questions.md verified facts from live testing against QoD
   architecture.md       data path history + the ODBC-era analysis
@@ -140,8 +141,13 @@ tenant/pool routing, RBAC-filtered navigation, column masking, row policies).
       Phase 4; `Tests/TestSuites/QodFolding/` + `Tests/Diagnostics/QodFolding/`).
       The RLS sentinel fails until quack-on-demand fix/rls-quoted-identifiers
       ships (quoted identifiers bypassed row policies, found by this suite).
-- [ ] DirectQuery validation pass + Service/gateway story (plan Phase 6;
-      docs/resolved-questions.md Q1).
+- [x] Service/gateway story resolved and documented (plan Phase 6, Q1): the
+      Service always needs an on-premises data gateway hosting the .mez; the
+      in-box driver removes the driver install, not the gateway. Gateway-side
+      ADBC support must be verified per gateway build. See
+      docs/service-and-gateway.md.
+- [ ] DirectQuery validation pass in Desktop (checklist in
+      docs/service-and-gateway.md).
 - [ ] Fill in real OIDC endpoints / `client_id` / scopes in `OAuthConfig`.
 - [ ] Provide a public test instance + per-auth credentials for certification.
 - [x] Connector icons sourced from the official Quack on Demand brand mark.
