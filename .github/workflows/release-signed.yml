@@ -54,15 +54,15 @@ jobs:
           $cfg = "$mk.config"
           $xml = Get-Content $cfg -Raw
           if ($xml -notmatch 'System\.Threading\.Tasks\.Extensions') {
-            $redirect = @"
-    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
-      <dependentAssembly>
-        <assemblyIdentity name="System.Threading.Tasks.Extensions" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" />
-        <bindingRedirect oldVersion="0.0.0.0-4.2.1.0" newVersion="4.2.1.0" />
-      </dependentAssembly>
-    </assemblyBinding>
-  </runtime>
-"@
+            $redirect = @(
+              '    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">',
+              '      <dependentAssembly>',
+              '        <assemblyIdentity name="System.Threading.Tasks.Extensions" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" />',
+              '        <bindingRedirect oldVersion="0.0.0.0-4.2.1.0" newVersion="4.2.1.0" />',
+              '      </dependentAssembly>',
+              '    </assemblyBinding>',
+              '  </runtime>'
+            ) -join [Environment]::NewLine
             $xml.Replace("  </runtime>", $redirect) | Set-Content $cfg -NoNewline
             Write-Host "Patched missing binding redirect into $cfg"
           }
