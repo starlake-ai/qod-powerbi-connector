@@ -1,0 +1,1 @@
+#table( type table [o_orderpriority = text, cnt = number] , {{"1-URGENT", 30111} , {"2-HIGH", 30172} , {"3-MEDIUM", 29563} , {"4-NOT SPECIFIED", 29910} , {"5-LOW", 30244} } ) 

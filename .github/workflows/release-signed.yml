@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist, stage | Out-Null
-          Copy-Item src/QoD.pq, src/resources.resx stage/
+          Copy-Item src/QoD.pq, src/QoDAdbcConfig.pqm, src/TypeInfo.pqm, src/SqlGenerator.pqm, src/SqlGeneratorCommon.pqm, src/resources.resx stage/
           Copy-Item src/icons/QoD*.png stage/
           if (Test-Path dist/QoD.mez) { Remove-Item dist/QoD.mez -Force }
           Add-Type -AssemblyName System.IO.Compression.FileSystem

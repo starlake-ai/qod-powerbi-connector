@@ -1,0 +1,5 @@
+{
+  "FailOnMissingOutputFile": true,
+  "QueryFilePath": "../TestSuites/QodFolding",
+  "DiagnosticsFolderPath": "../Diagnostics/QodFolding"
+}

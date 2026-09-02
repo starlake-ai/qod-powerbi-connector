@@ -1,0 +1,10 @@
+{
+  "FailOnMissingOutputFile": true,
+  "QueryFilePath": "../../../../testframework/tests/TestSuites/Standard",
+  "ParameterQueryFilePath": "../ParameterQueries/QoD.parameterquery.pq",
+  "DiagnosticsFolderPath": "../Diagnostics/Standard",
+  "TestFilters": [
+    "!Text/TextMiddleWithNegativeLength.query.pq",
+    "!DateTime/DateTimeArithmetic.query.pq"
+  ]
+}

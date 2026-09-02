@@ -1,5 +1,9 @@
 # QoD Connector - Architecture
 
+> **Historical note (2026-09-02):** the connector now ships on `Adbc.Connection`
+> over the in-box FlightSQL ADBC driver (see the README). The ODBC analysis
+> below is retained as the record of why that transport was retired.
+
 ## Data path
 
 ```

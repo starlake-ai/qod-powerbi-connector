@@ -13,17 +13,22 @@ pick a tenant/pool, authenticate, and query in **Import or DirectQuery** mode.
 ## How it connects
 
 ```
-Power BI ──M──▶ QoD.mez ──ODBC──▶ Arrow Flight SQL ODBC driver ──Flight SQL──▶ Quack gateway ──▶ DuckDB
+Power BI ──M──▶ QoD.mez ──Adbc.Connection──▶ FlightSQL ADBC driver (in-box) ──Flight SQL──▶ Quack gateway ──▶ DuckDB
 ```
 
-Power BI's M engine consumes **ODBC** (via `Odbc.DataSource`); it has no public
-`Adbc.DataSource` for custom connectors. The connector M is complete and validated,
-**but the only Flight SQL ODBC driver (Dremio's v0.9.7 beta) is too immature** - it
-errors on Power BI's `SQLGetInfo(SQL_DBMS_NAME)` probe, which is unfixable from the
-connector or server. So the chosen route is the **"Dremio path"**: a
-certification-time enablement onto Microsoft's **FlightSQL ADBC** driver (Dremio's
-replacement driver - and Quack speaks the same protocol). **ADBC is proven working
-against Quack end-to-end.** See [docs/architecture.md](docs/architecture.md).
+The connector wraps **`Adbc.Connection`**, the M engine's ADBC entry point, over
+the **FlightSQL ADBC driver that ships in-box** with Power BI Desktop and the
+Power Query SDK - no driver installation on the client or gateway. The ADBC core
+is adapted from Microsoft's MIT-licensed
+[DuckDbFlightSQL sample](https://github.com/microsoft/DataConnectors/tree/master/samples/DuckDbFlightSQL)
+(see [NOTICE](NOTICE)); QoD serves DuckDB over Flight SQL, so the sample's SQL
+generator and type map carry over unchanged, giving **query folding** (filters,
+projections, aggregations, top-N, joins pushed down as SQL) for free.
+
+The previous transport, `Odbc.DataSource` over the Arrow Flight SQL ODBC driver,
+was blocked on driver maturity (Dremio's v0.9.7 beta errors on Power BI's
+`SQLGetInfo(SQL_DBMS_NAME)` probe). It lives in this repo's git history; the
+analysis survives in [docs/architecture.md](docs/architecture.md).
 
 ## Authentication (all three supported)
 
@@ -36,89 +41,120 @@ against Quack end-to-end.** See [docs/architecture.md](docs/architecture.md).
 Per-method setup (including the customer-side Keycloak/OAuth client) is in
 **[docs/authentication.md](docs/authentication.md)**.
 
+Sessions are scoped by the `tenant` and `pool` gRPC call headers on every RPC.
+All enforcement (table ACLs, column masking, row policies, metadata filtering)
+happens server-side at the QoD edge; the connector is a plain ADBC client and
+holds no privileged access.
+
 ## Layout
 
 ```
 src/
-  QoD.pq            connector logic (Odbc.DataSource, auth, capabilities)
-  QoD.query.pq      test queries (smoke / navigation / folding)
-  QoD.proj          MSBuild project -> QoD.mez
-  resources.resx    localized UI strings
-  icons/            connector icons + generator script
+  QoD.pq                connector logic (Adbc.Connection, navigation, auth)
+  QoDAdbcConfig.pqm     ADBC driver configuration (in-box FlightSQL driver)
+  TypeInfo.pqm          DuckDB native type -> M type map
+  SqlGenerator.pqm      DuckDB dialect SQL generation (query folding)
+  SqlGeneratorCommon.pqm shared folding machinery
+  QoD.query.pq          test queries (smoke / navigation / folding)
+  QoD.proj              MSBuild project -> QoD.mez
+  resources.resx        localized UI strings
+  icons/                connector icons + generator script
+Tests/
+  Rbac/                 two-user RBAC navigation acceptance test (Python/ADBC)
+  ...                   SDK test framework assets (settings, baselines)
 docs/
-  architecture.md      data path + the ADBC upgrade path
-  authentication.md    auth methods + IdP (Keycloak/OAuth) setup for customers
-  certification.md     Microsoft certification checklist & process
-  quack-server-spec.md server-side requirements to hand to the Quack team
-CHANGELOG.md           versioned change history
+  connecting.md         installation and connection guide (ADBC path)
+  service-and-gateway.md Service refresh, gateway requirement, DirectQuery
+  limitations.md        known limitations
+  resolved-questions.md verified facts from live testing against QoD
+  architecture.md       data path history + the ODBC-era analysis
+  authentication.md     auth methods + IdP (Keycloak/OAuth) setup for customers
+  certification.md      Microsoft certification checklist & process
+  quack-server-spec.md  server-side requirements to hand to the Quack team
+CHANGELOG.md            versioned change history
+NOTICE                  MIT attribution for the vendored Microsoft sample
 ```
 
 ## Install
 
 See **[INSTALL.md](INSTALL.md)** for full install instructions - building from
 source, dropping in a pre-built **unsigned** `.mez` (dev), or deploying a
-**signed** `.pqx` (production).
+**signed** `.pqx` (production). No ODBC/ADBC driver install is needed: the
+FlightSQL ADBC driver ships with Power BI Desktop (verified against
+2.152.882.0; documented minimum for `Adbc.Connection` is 2.145.1105.0).
 
 ## Build
 
-Use the **VS Code "Power Query SDK"** extension → *Build connector project*, or:
+The `.mez` is a flat zip of `QoD.pq`, the four `.pqm` modules,
+`resources.resx`, and the icon PNGs (this is exactly what the release
+workflows do):
 
 ```sh
-dotnet build src/QoD.proj -c Release   # -> bin/Release/QoD.mez
+cd src && zip -X ../bin/Release/QoD.mez QoD.pq *.pqm resources.resx icons/QoD*.png -j
 ```
 
-Both routes use the `Microsoft.PowerQuery.SdkTools.MSBuild` SDK, which the VS Code
-extension provisions (it isn't on public NuGet). For a **headless / CI** build with
-just the `Microsoft.PowerQuery.SdkTools` NuGet package, invoke its `MakePQX` directly:
-
-```sh
-MakePQX compile src -d bin/Release -t QoD.mez   # validates the M + packages
-```
-
-`MakePQX compile` packages the root `.pq` + `resources.resx`; add the `icons/*.png`
-to the resulting `.mez` (a zip) so `Extension.Contents` can resolve them.
-*Verified 2026-06-17: `QoD.pq` compiles clean (no M syntax errors).*
+Or use the **VS Code "Power Query SDK"** extension → *Build connector project*
+(`dotnet build src/QoD.proj -c Release`), which also validates the M.
 
 ## Develop / test
 
 1. Build `QoD.mez`.
 2. In VS Code SDK: *Set credential* for the auth kind you're testing.
-3. *Evaluate* `src/QoD.query.pq` (edit the host/tenant/pool first).
+3. *Evaluate* `src/QoD.query.pq` (defaults target a local `qod demo`:
+   tenant `acme`, pool `bi`, credential alice / demo-alice).
 4. To test in Desktop: copy `QoD.mez` to
    `Documents\Power BI Desktop\Custom Connectors\` and enable
    *Allow any extension* (File → Options → Security) for unsigned dev builds.
+5. RBAC acceptance: `python3 Tests/Rbac/rbac_navigation_test.py` against a
+   running `qod demo` proves the navigator inherits QoD's RBAC (alice sees 4
+   tables, acme-admin sees 8).
 
 ## Decisions
 
-- **Driver:** official **Apache Arrow C++ Flight SQL ODBC** driver (vendor-neutral,
-  maintained, certifiable). See the capability matrix in
-  [docs/architecture.md](docs/architecture.md).
-- **tenant/pool:** conveyed as native Flight SQL gRPC call headers, reusing the same
-  routing contract Quack already honors for JDBC - so **no server change**. Encoding
-  is driver-specific (centralized in `EncodeScope`): the Dremio ODBC build auto-
-  forwards plain `tenant`/`pool` props as headers (used today); the upstream C++
-  build uses an explicit `RPCCallHeaders` property. See [docs/architecture.md](docs/architecture.md).
+- **Transport:** `Adbc.Connection` over the in-box **FlightSQL ADBC** driver.
+  The ODBC route is retired (driver immaturity; see *How it connects*).
+- **tenant/pool:** conveyed as native Flight SQL gRPC call headers
+  (`adbc.flight.sql.rpc.call_header.*`), reusing the same routing contract
+  Quack already honors for JDBC and Python ADBC - so **no server change**.
+- **Navigation top level:** `SELECT current_database()`, never `SHOW DATABASES`
+  - the edge admits the latter unfiltered and its Prepare-time probe cannot
+  wrap it. See [docs/resolved-questions.md](docs/resolved-questions.md).
+- **Relationships:** PK/FK detection degrades to "no keys" against QoD
+  DuckLake tenant-dbs (RBAC-denied without a covering grant, and DuckLake
+  records no constraints). See [docs/limitations.md](docs/limitations.md).
 
 ## Status / path to certification
 
-**Decision (2026-06-17): pivot to the ADBC "Dremio path".** The ODBC transport is
-blocked on driver immaturity (see *How it connects*), so certification goes via
-Microsoft's FlightSQL ADBC enablement rather than the bundled ODBC driver.
+**2026-09-02: the ADBC transport is implemented and verified end-to-end** in
+Power BI Desktop against a live `qod demo` instance (TLS, Basic auth,
+tenant/pool routing, RBAC-filtered navigation, column masking, row policies).
 
-- [x] Connector M built (`QoD.mez` via MakePQX) and validated in Desktop up to the
-      driver's `SQLGetInfo` probe - five real bugs found & fixed in the process.
-- [x] **ADBC path proven** end-to-end against a live Quack instance (TLS, Basic auth,
-      tenant/pool routing, discovery, typed + folded queries). See
-      [docs/quack-server-spec.md](docs/quack-server-spec.md) §11.
-- [ ] **Engage Microsoft** for FlightSQL ADBC enablement (the Dremio path), bringing
-      the ADBC validation evidence + "same protocol as Dremio" argument.
+- [x] ADBC connector core (`Adbc.Connection`, in-box driver, query folding
+      machinery from the Microsoft sample).
+- [x] Verified in Power BI Desktop 2.152.882.0: connect, navigate, preview,
+      masked/filtered data as a restricted principal.
+- [x] RBAC navigation acceptance test (two-user diff), repeatable against
+      `qod demo`.
+- [x] Type map reconciled against QoD's `GetXdbcTypeInfo` and live DuckLake type
+      surface (plan Phase 3; wire baseline in `Tests/Types/`, `.pqout` pending SDK).
+- [x] Folding diagnostics baselines via PQTest as a restricted principal (plan
+      Phase 4; `Tests/TestSuites/QodFolding/` + `Tests/Diagnostics/QodFolding/`).
+      The RLS sentinel fails until quack-on-demand fix/rls-quoted-identifiers
+      ships (quoted identifiers bypassed row policies, found by this suite).
+- [x] Service/gateway story resolved and documented (plan Phase 6, Q1): the
+      Service always needs an on-premises data gateway hosting the .mez; the
+      in-box driver removes the driver install, not the gateway. Gateway-side
+      ADBC support must be verified per gateway build. See
+      docs/service-and-gateway.md.
+- [x] DirectQuery validated in Desktop (2026-09-02): connect in DirectQuery
+      mode, per-interaction folded SQL, policies applied server-side.
 - [ ] Fill in real OIDC endpoints / `client_id` / scopes in `OAuthConfig`.
 - [ ] Provide a public test instance + per-auth credentials for certification.
 - [x] Connector icons sourced from the official Quack on Demand brand mark.
 
 ## Notes
 
-- The repo directory is named `qod-powerbi-connector`; the connector identifier and
-  display name are **QoD** / **Quack on Demand**.
+- The repo directory is named `qod-powerbi-connector`; the connector identifier
+  and display name are **QoD** / **Quack on Demand**.
 - Icons are downscaled from the official brand mark
   (`src/icons/source/qod-mark-512.png`) by `src/icons/generate-icons.ps1`.

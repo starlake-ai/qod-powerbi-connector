@@ -1,0 +1,17 @@
+[
+  {
+    "Command": "SELECT current_database() AS Name"
+  },
+  {
+    "Command": "SELECT schema_name AS Name FROM information_schema.schemata WHERE catalog_name = 'acme_tpch' AND schema_name <> 'information_schema'"
+  },
+  {
+    "Command": "SELECT table_name AS Name, table_type FROM information_schema.tables WHERE table_catalog = 'acme_tpch' AND table_schema = 'tpch1'"
+  },
+  {
+    "Command": "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_catalog = 'acme_tpch' AND table_schema = 'tpch1' AND table_name = 'orders' ORDER BY ordinal_position"
+  },
+  {
+    "Command": "select \"o_orderpriority\", COUNT(1) as \"C1\" from \"tpch1\".\"orders\" group by \"o_orderpriority\" order by \"o_orderpriority\""
+  }
+]

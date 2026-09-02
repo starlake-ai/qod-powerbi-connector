@@ -18,11 +18,11 @@ Three ways to get the connector into Power BI, depending on whether you want to
 
 - **Power BI Desktop** (and/or the on‑premises **data gateway** for refresh in the
   Power BI Service).
-- The **Arrow Flight SQL ODBC driver** registered on the machine/gateway - the
-  connector wraps it (`Driver = "Arrow Flight SQL ODBC Driver"`). Download and run
-  the Windows installer (`.msi`) from
-  [Dremio's Arrow Flight SQL ODBC driver page](https://docs.dremio.com/cloud/sonar/client-apps/drivers/arrow-flight-sql-odbc/).
-  See the driver-maturity caveat in [docs/architecture.md](docs/architecture.md).
+- **No driver install.** The connector wraps `Adbc.Connection` over the
+  **FlightSQL ADBC driver that ships in-box** with Power BI Desktop
+  (`bin\ADBC Drivers\FlightSQL\libadbc_driver_flightsql.dll`) and with the Power
+  Query SDK's test tools. Power BI Desktop 2.145.1105.0 (July 2025) or later;
+  verified against 2.152.882.0.
 - **To build or sign:** the **Power Query SDK**. Easiest via the VS Code
   *“Power Query SDK”* extension, which provisions the MSBuild SDK and the
   `MakePQX` CLI used below.
@@ -31,7 +31,7 @@ Three ways to get the connector into Power BI, depending on whether you want to
 
 | File | What it is | Loads in PBI when… |
 |------|------------|--------------------|
-| `QoD.mez` | The connector package - a zip of `QoD.pq` + `resources.resx` + icon PNGs. **Unsigned.** | the “allow any extension” security setting is on (Option 2) |
+| `QoD.mez` | The connector package - a zip of `QoD.pq` + the four `.pqm` modules + `resources.resx` + icon PNGs. **Unsigned.** | the “allow any extension” security setting is on (Option 2) |
 | `QoD.pqx` | A **packed, signed** connector (signed with a code‑signing certificate). | the signing certificate is trusted (Option 3) |
 
 ---
@@ -72,7 +72,7 @@ A `.mez` is just a flat zip, so add the icons to get a complete package
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $stage = Join-Path $env:TEMP "qodmez"
 New-Item -ItemType Directory -Force $stage | Out-Null
-Copy-Item src\QoD.pq, src\resources.resx $stage
+Copy-Item src\QoD.pq, src\*.pqm, src\resources.resx $stage
 Copy-Item src\icons\QoD*.png $stage
 $out = "bin\Release\QoD.mez"
 if (Test-Path $out) { Remove-Item $out -Force }
@@ -256,4 +256,4 @@ record takes `UseEncryption`, `ConnectionTimeout`, `CommandTimeout`.)
 | *“… couldn’t load … not trusted”* | Unsigned `.mez` without the security downgrade (Option 2), or signed `.pqx` whose cert thumbprint isn’t trusted (Option 3). |
 | *“We couldn’t convert a value of type Record to type Logical”* | The 4th arg is `trustServerCertificate` (a logical). Put the `options` **record** in the **5th** position. |
 | Login fails / no credentials reach the server | Ensure you’re on a build where the credential rides `CredentialConnectionString` (current `QoD.pq`). Details: [docs/quack-server-spec.md](docs/quack-server-spec.md) R4a / §11. |
-| Empty navigator / `Unknown GetInfo type: 17` | Known Dremio ODBC driver-maturity gap; the strategic path is ADBC. See [docs/architecture.md](docs/architecture.md) and `quack-server-spec.md` R13/R15. |
+| Empty navigator / `Unknown GetInfo type: 17` | Only applies to the retired ODBC transport (repo history). The ADBC connector does not use `SQLGetInfo`. |
