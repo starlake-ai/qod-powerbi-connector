@@ -308,9 +308,8 @@ GetTableType = (context as record, catalog as text, schema as text, table as tex
         withType = Table.AddColumn(columns, "Type",
             each [Type = GetColumnType([data_type], [is_nullable]), Optional = false]),
         rowType = Type.ForRecord(Record.FromList(withType[Type], withType[column_name]), false),
-        tableType = type table rowType,
-        withPrimaryKeys = ApplyPrimaryKeys(context, catalog, schema, table, tableType)
-    in withPrimaryKeys;
+        tableType = type table rowType
+    in tableType;
 
 GetColumnType = (typeName as text, isNullable as text) =>
     let
@@ -323,53 +322,15 @@ GetColumnType = (typeName as text, isNullable as text) =>
     in if isNullable = "YES" then type nullable mtype else mtype;
 
 // ============================================================================
-// PRIMARY & FOREIGN KEY RELATIONSHIPS
-// A no-op against QoD DuckLake tenant-dbs, for two independent reasons: the
-// constraint relations are RBAC-denied without a covering grant, and DuckLake
-// records no PK/FK constraints anyway. The `try` degrades to "no keys".
-// See docs/limitations.md.
+// PRIMARY & FOREIGN KEY RELATIONSHIPS - intentionally absent
+// The vendored sample detected keys via information_schema constraint
+// relations. Against QoD those queries are RBAC-denied for normal principals,
+// and a PermissionDenied surfacing mid-evaluation is mapped by the mashup
+// engine to a credential error (AccessUnauthorized) that ABORTS the query -
+// an M-level `try` does not catch it. DuckLake records no PK/FK constraints
+// anyway, so detection could never return keys. See docs/limitations.md and
+// docs/resolved-questions.md.
 // ============================================================================
-ApplyPrimaryKeys = (context as record, catalog as text, schema as text, table as text, tableType as type) as type =>
-    let
-        pkCommand = Text.Combine({
-            "SELECT kcu.column_name ",
-            "FROM information_schema.table_constraints tc ",
-            "JOIN information_schema.key_column_usage kcu ",
-            "  ON tc.constraint_name = kcu.constraint_name ",
-            "  AND tc.table_catalog = kcu.table_catalog ",
-            "  AND tc.table_schema = kcu.table_schema ",
-            "  AND tc.table_name = kcu.table_name ",
-            "WHERE tc.constraint_type = 'PRIMARY KEY' ",
-            "  AND tc.table_catalog = ", EscapeString(catalog),
-            "  AND tc.table_schema = ", EscapeString(schema),
-            "  AND tc.table_name = ", EscapeString(table),
-            " ORDER BY kcu.ordinal_position"
-        }),
-        pkResult = try context[ExecuteQuery](pkCommand, [IsMetadata = true]) otherwise #table({"column_name"}, {}),
-        pkColumns = pkResult[column_name],
-        hasPK = List.Count(pkColumns) > 0,
-        withPK = if hasPK then Type.ReplaceTableKeys(tableType, {[Columns = pkColumns, Primary = true]}) else tableType
-    in withPK;
-
-GetForeignKeys = (context as record, catalog as text, schema as text, table as text) as table =>
-    let
-        fkCommand = Text.Combine({
-            "SELECT kcu.column_name AS from_column, ccu.table_schema AS to_schema, ",
-            "  ccu.table_name AS to_table, ccu.column_name AS to_column ",
-            "FROM information_schema.table_constraints tc ",
-            "JOIN information_schema.key_column_usage kcu ",
-            "  ON tc.constraint_name = kcu.constraint_name AND tc.table_catalog = kcu.table_catalog ",
-            "  AND tc.table_schema = kcu.table_schema AND tc.table_name = kcu.table_name ",
-            "JOIN information_schema.constraint_column_usage ccu ",
-            "  ON tc.constraint_name = ccu.constraint_name AND tc.table_catalog = ccu.table_catalog ",
-            "WHERE tc.constraint_type = 'FOREIGN KEY' ",
-            "  AND tc.table_catalog = ", EscapeString(catalog),
-            "  AND tc.table_schema = ", EscapeString(schema),
-            "  AND tc.table_name = ", EscapeString(table)
-        }),
-        fkResult = try context[ExecuteQuery](fkCommand, [IsMetadata = true])
-            otherwise #table({"from_column", "to_schema", "to_table", "to_column"}, {})
-    in fkResult;
 
 // ============================================================================
 // NATIVE QUERY SUPPORT

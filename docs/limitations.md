@@ -57,3 +57,12 @@ would be a QoD-side change with its own review, not a connector change.
 time ("Failed to convert DuckDB type to DuckLake"), so they cannot occur in QoD
 tenant-db tables and the connector defines no mapping for them. `TIMESTAMP_NS`
 values lose sub-100ns precision in M (M datetimes tick at 100ns).
+
+## An RBAC denial mid-query surfaces as a credential error
+
+When the edge denies a statement (ACL) after the connection is established, the
+mashup engine reports "The credentials provided for the QoD source are invalid"
+(AccessUnauthorized) rather than a permission message, and the evaluation
+aborts; an M-level `try` cannot intercept it. In practice this appears when a
+native query touches an ungranted table. Navigation never triggers it because
+every metadata query the connector issues is RBAC-filtered rather than denied.

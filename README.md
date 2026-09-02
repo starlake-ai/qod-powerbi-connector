@@ -136,7 +136,10 @@ tenant/pool routing, RBAC-filtered navigation, column masking, row policies).
       `qod demo`.
 - [x] Type map reconciled against QoD's `GetXdbcTypeInfo` and live DuckLake type
       surface (plan Phase 3; wire baseline in `Tests/Types/`, `.pqout` pending SDK).
-- [ ] Folding diagnostics baselines via the SDK test framework (plan Phase 4).
+- [x] Folding diagnostics baselines via PQTest as a restricted principal (plan
+      Phase 4; `Tests/TestSuites/QodFolding/` + `Tests/Diagnostics/QodFolding/`).
+      The RLS sentinel fails until quack-on-demand fix/rls-quoted-identifiers
+      ships (quoted identifiers bypassed row policies, found by this suite).
 - [ ] DirectQuery validation pass + Service/gateway story (plan Phase 6;
       docs/resolved-questions.md Q1).
 - [ ] Fill in real OIDC endpoints / `client_id` / scopes in `OAuthConfig`.

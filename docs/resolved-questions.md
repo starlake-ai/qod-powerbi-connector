@@ -98,3 +98,31 @@ Incidental edge observation: every DDL statement makes the ADBC driver log
 "FlightSQL endpoint returned inconsistent schema" (the edge advertises a `Count`
 int64 result schema but DDL answers `Success` bool). Cosmetic on the client, but it
 is a Flight SQL conformance wart in the QoD edge worth a main-repo issue.
+
+## Phase 4 folding verification (live, 2026-09-02) and an RLS bypass found
+
+PQTest (SdkTools 2.155.2) ran the folding suite in `Tests/TestSuites/QodFolding/`
+as the restricted principal alice. Filter, projection, aggregation, top-N, and
+join all genuinely fold (see the committed `.adbc.diagnostics`: WHERE with cast,
+GROUP BY + COUNT, ORDER BY + LIMIT, INNER JOIN with aliases).
+
+Two QoD-side findings came out of the screen-survival check:
+
+1. **PermissionDenied aborts the evaluation as a credential error.** A
+   mid-evaluation RBAC denial through the ADBC channel is mapped by the mashup
+   engine to "credentials are invalid" (AccessUnauthorized) and is NOT catchable
+   by an M-level `try`. This killed the sample's PK-detection query for alice and
+   with it the whole navigation; the connector no longer issues constraint
+   queries at all (see limitations.md).
+2. **Quoted identifiers bypassed row-level security (fail-open).** Folded SQL
+   quotes every identifier; `RowPolicyRewriter.maybeWrap` matched policies
+   against jsqlparser's raw `getName` values, which keep the quotes, so
+   `"tpch1"."customer"` escaped its row policy while the column masker (which
+   unquotes before matching) still applied. Verified live: alice's folded
+   DISTINCT returned all five market segments where the unquoted form returns
+   only BUILDING. Fixed in quack-on-demand on branch
+   `fix/rls-quoted-identifiers` (unquote for the match, keep the caller's
+   quoting in the rewritten SQL) with spec coverage.
+   `Tests/TestSuites/QodFolding/FoldRlsCls.query.pqout` pins the CORRECT
+   single-row (BUILDING, ***) expectation, so the suite fails against an
+   unfixed edge by design.
