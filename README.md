@@ -35,7 +35,7 @@ analysis survives in [docs/architecture.md](docs/architecture.md).
 | Credential in Power BI | Maps to Quack backend           |
 |------------------------|---------------------------------|
 | Username / password    | Postgres / BCrypt               |
-| Access token (PAT/JWT) | QoD PAT or external JWT         |
+| Access token (JWT)     | External JWT (HS256/RS256)      |
 | OAuth 2.0 / OIDC       | Keycloak / Entra ID / Google / Cognito |
 
 Per-method setup (including the customer-side Keycloak/OAuth client) is in

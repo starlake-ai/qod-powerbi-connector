@@ -35,7 +35,7 @@ Get Data > search for "Quack on Demand". The dialog asks for:
 Then pick a credential kind:
 
 - **Username & Password**: a QoD user of that tenant (Flight Basic handshake).
-- **Access token**: a QoD PAT or external JWT, sent as `Authorization: Bearer <token>`.
+- **Access token**: an external JWT (HS256/RS256), sent as `Authorization: Bearer <token>` and validated by the edge's configured JWT/OIDC bearer providers (`JWT_SECRET_KEY` / `JWT_PUBLIC_KEY_PATH`, or OIDC). QoD PATs (`qod_pat_...`) are REST-plane credentials and are NOT accepted by the Flight SQL edge.
 - **OAuth 2.0**: sign in through the IdP configured in `OAuthConfig`
   (see [authentication.md](authentication.md)); the access token rides as a
   Bearer credential.

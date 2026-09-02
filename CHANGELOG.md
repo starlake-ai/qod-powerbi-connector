@@ -25,7 +25,7 @@ as 1.0.0; the wire underneath changes completely.
   `SELECT current_database()`; `SHOW DATABASES` is never issued (the edge
   admits it unfiltered and its Prepare probe cannot wrap it).
 - Username/password now rides the Flight Basic handshake as driver
-  `username`/`password` properties; Key (PAT/JWT) and OAuth ride
+  `username`/`password` properties; Key (external JWT) and OAuth ride
   `Authorization: Bearer` via `adbc.flight.sql.authorization_header`.
 - tenant/pool/superuser ride as `adbc.flight.sql.rpc.call_header.*` entries;
   `trustServerCertificate` maps to the driver's `tls_skip_verify`;

@@ -9,7 +9,7 @@
 // Odbc.DataSource transport (blocked on Flight SQL ODBC driver maturity)
 // lives in this repo's history on main; see docs/architecture.md.
 //
-// Credentials (Username/Password, PAT/JWT, OAuth) are handled via
+// Credentials (Username/Password, JWT bearer, OAuth) are handled via
 // Extension.CurrentCredential() only - never as function parameters, because
 // dialog parameter values are persisted into the user's query.
 [Version = "2.0.0"]
@@ -127,7 +127,7 @@ QoDImpl = (server as text, tenant as text, pool as text, trustServerCertificate 
 // CREDENTIAL HANDLING
 // Maps the selected Power BI credential to ADBC connection properties:
 //   UsernamePassword -> driver username/password (Flight Basic handshake)
-//   Key (PAT / JWT)  -> Authorization: Bearer <key>
+//   Key (JWT bearer) -> Authorization: Bearer <key>
 //   OAuth            -> Authorization: Bearer <access_token>
 // ============================================================================
 GetCredentialConnectionProperties = () =>

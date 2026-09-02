@@ -41,3 +41,12 @@ the connector as Power BI Desktop-only.
 The QoD edge runs each statement standalone; transaction toggling (autocommit off) is
 not supported. This matches how the M engine drives ADBC, so it is not user-visible in
 normal use.
+
+## PATs do not work on the Flight SQL edge
+
+QoD personal access tokens (`qod_pat_...`) are REST-plane credentials: the
+manager API accepts them, but the Flight SQL edge's bearer chain validates only
+external JWTs (`JWT_SECRET_KEY` / `JWT_PUBLIC_KEY_PATH`) and OIDC provider
+tokens. A PAT entered in the connector's Access token credential is rejected
+with UNAUTHENTICATED. Verified live 2026-09-02. Making the edge accept PATs
+would be a QoD-side change with its own review, not a connector change.

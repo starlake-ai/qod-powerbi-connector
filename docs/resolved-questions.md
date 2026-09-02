@@ -56,3 +56,18 @@ because DuckLake does not record PK/FK constraints. Relationship detection there
 takes the connector's `try` fallback (no keys) for everyone, for two independent
 reasons. The connector's schema, table, and column navigation queries were all verified
 to succeed and to return the RBAC-filtered listing.
+
+## Auth-kind verification matrix (live, 2026-09-02, through adbc_driver_flightsql)
+
+- **UsernamePassword**: verified (alice via Flight Basic handshake; RBAC, masking,
+  row policies all bind). Superuser mode also verified: admin + the `superuser`
+  call header reads tables no tenant grant covers.
+- **Key (Access token)**: verified with an external HS256 JWT against an edge
+  booted with `JWT_SECRET_KEY`. The identity binds to the matching qodstate user
+  (masking and grants applied); a tampered signature is rejected UNAUTHENTICATED;
+  an edge with no bearer providers configured answers "No bearer auth providers
+  configured". QoD PATs are NOT accepted on the Flight edge (see limitations.md).
+- **OAuth**: wire-identical to Key (the access token rides the same
+  Authorization: Bearer property), so the transport is covered by the Key
+  verification; the interactive PKCE flow and edge-side OIDC provider config
+  still need an IdP-equipped environment to exercise.
